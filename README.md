@@ -5,7 +5,7 @@ Test project devoted to extending EntityFramework's `GlobalQueryFilters` functio
 ## The problem
 
 Soft deletion can be configured on entites by using global query filters e.g. `ModelBuilder.Entity<Post>.HasQueryFilter(p => !p.IsDeleted)`.
-If the parent `Blog` entity contains a collection of `Posts` (`ICollection<Post> Posts`) and some of those posts are deleted, then the Blog.Posts property will only contain the non-deleted posts.
+If the parent `Blog` entity contains a collection of `Posts` (`ICollection<Post> Posts`) and some of those posts are deleted, then the `Blog.Posts` property will only contain the non-deleted posts.
 Similarly, if you want to return *ALL* posts and you have the parent `Blog` as a property of the post (`Post.Blog`), only posts belonging to non-deleted blogs will be returned!
 
 **The goal is simple:** <u>Ignore</u> the global query filters for specific entities by using an IQueryable extension method `IgnoreAbpQueryFilter` which stops the filters being applied on a case-by-case basis.
@@ -14,7 +14,7 @@ Similarly, if you want to return *ALL* posts and you have the parent `Blog` as a
 ```csharp
 PostsRepository
     .Include(x => x.Blog)
-    // If the parent'Blog' entity is deleted, this should still allow the entity to be returned
+    // Even when the parent 'Blog' entity is deleted, this should allow the entity to be returned
     .IgnoreAbpQueryFilter(x => x.Blog)
     .ToListAsync();
 ```
@@ -40,13 +40,13 @@ PostsRepository
     * Pages/Index.cshtml
     * Pages/Index.js
 
-
 ## Useful links
 
 ### Docs
 * https://docs.microsoft.com/en-us/ef/core/querying/filters
 * https://docs.microsoft.com/en-us/ef/core/dbcontext-configuration/
 * https://docs.microsoft.com/en-us/ef/core/modeling/
+* https://docs.microsoft.com/en-us/dotnet/csharp/expression-trees-interpreting/
 
 ### Source code
 * Entry point: [QueryCompilationContext.cs#L179-L210](https://github.com/dotnet/efcore/blob/0b3165096d6b55443fc06ae48404c2b037dd73e7/src/EFCore/Query/QueryCompilationContext.cs#L179-L210)
