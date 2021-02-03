@@ -8,13 +8,15 @@ Soft deletion can be configured on entites by using global query filters e.g. `M
 If the parent `Blog` entity contains a collection of `Posts` (`ICollection<Post> Posts`) and some of those posts are deleted, then the Blog.Posts property will only contain the non-deleted posts.
 Similarly, if you want to return *ALL* posts and you have the parent `Blog` as a property of the post (`Post.Blog`), only posts belonging to non-deleted blogs will be returned!
 
-The goal is simple: <u>Ignore</u> the global query filters for specific entities by using an IQueryable extension method `IgnoreAbpQueryFilter` which stops the filters being applied on a case-by-case basis.
+**The goal is simple:** <u>Ignore</u> the global query filters for specific entities by using an IQueryable extension method `IgnoreAbpQueryFilter` which stops the filters being applied on a case-by-case basis.
 
-## Example
+### Example
 ```csharp
-(await ReadOnlyRepository.WithDetailsAsync(x => x.Blog))
-    // This should allow deleted 'Blog' entities to be returned
-    .IgnoreAbpQueryFilter(x => x.Blog);
+PostsRepository
+    .Include(x => x.Blog)
+    // If the parent'Blog' entity is deleted, this should still allow the entity to be returned
+    .IgnoreAbpQueryFilter(x => x.Blog)
+    .ToListAsync();
 ```
 
 ## Running the project
