@@ -1,0 +1,27 @@
+﻿@page
+@using Microsoft.AspNetCore.Mvc.Localization
+@using AbpQueryFilterDemo.Localization
+@using Volo.Abp.Users
+@model AbpQueryFilterDemo.Web.Pages.IndexModel
+@inject IHtmlLocalizer<AbpQueryFilterDemoResource> L
+@inject ICurrentUser CurrentUser
+@section styles {
+    <abp-style-bundle>
+        <abp-style src="/Pages/Index.css" />
+    </abp-style-bundle>
+}
+@section scripts {
+    <abp-script-bundle>
+        <abp-script src="/Pages/Index.js" />
+    </abp-script-bundle>
+}
+<div class="container">
+    <div class="p-4 text-center">
+        <h1 class="mt-2">@L["Blogs"]</h1>
+        <abp-table striped-rows="true" id="BlogsTable"></abp-table>
+        <h1 class="mt-4 border-top">@L["Posts"]</h1>
+        <abp-table striped-rows="true" id="PostsTable"></abp-table>
+        <h1 class="mt-4 border-top">@L["Posts"] (@L["NoIncludes"])</h1>
+        <abp-table striped-rows="true" id="PostsTable_ExclDetails"></abp-table>
+    </div>
+</div>

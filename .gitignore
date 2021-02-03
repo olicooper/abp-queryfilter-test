@@ -348,3 +348,13 @@ MigrationBackup/
 
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
+
+
+node_modules/
+# AbpQueryFilterDemo
+src/AbpQueryFilterDemo.Web/Logs/*
+src/AbpQueryFilterDemo.Web.Host/Logs/*
+src/AbpQueryFilterDemo.IdentityServer/Logs/*
+src/AbpQueryFilterDemo.HttpApi.Host/Logs/*
+src/AbpQueryFilterDemo.HttpApi.HostWithIds/Logs/*
+src/AbpQueryFilterDemo.DbMigrator/Logs/*
