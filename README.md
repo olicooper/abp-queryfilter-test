@@ -36,6 +36,7 @@ PostsRepository
 * EntityframeworkCore
     * AbpEntityFrameworkQueryableExtensions.cs
     * CustomAbpDbContext.cs
+    * Repositories/PostRepository.cs
 * Web
     * Pages/Index.cshtml
     * Pages/Index.js

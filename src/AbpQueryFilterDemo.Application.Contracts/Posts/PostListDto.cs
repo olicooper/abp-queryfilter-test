@@ -18,5 +18,6 @@ namespace AbpQueryFilterDemo.Posts
     public class PostItem : EntityDto<Guid>
     {
         public string Title { get; set; }
+        public bool IsDeleted { get; set; }
     }
 }

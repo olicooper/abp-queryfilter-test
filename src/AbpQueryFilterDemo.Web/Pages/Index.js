@@ -16,6 +16,11 @@
                     data: "name"
                 },
                 {
+                    title: l('IsDeleted'),
+                    data: "isDeleted",
+                    render: (deleted) => (deleted ? "<strong>YES</strong>" : "NO")
+                },
+                {
                     title: l('Posts'),
                     data: "posts",
                     render: function (data) {
@@ -44,11 +49,14 @@
                     data: "title"
                 },
                 {
+                    title: l('IsDeleted'),
+                    data: "isDeleted",
+                    render: (deleted) => (deleted ? "<strong>YES</strong>" : "NO")
+                },
+                {
                     title: l('Blog'),
                     data: "blog",
-                    render: function (b) {
-                        return "<strong>" + b?.name + "</strong> > DEL:" + !b;
-                    }
+                    render: (b) => (b ? ("<strong>" + b?.name + "</strong> > DEL:" + b.isDeleted) : "undefined")
                 },
             ]
         })
@@ -67,13 +75,43 @@
                     data: "title"
                 },
                 {
+                    title: l('IsDeleted'),
+                    data: "isDeleted",
+                    render: (deleted) => (deleted ? "<strong>YES</strong>" : "NO")
+                },
+                {
                     title: l('Blog'),
                     data: "blog",
-                    render: function (b) {
-                        return "<strong>" + b?.name + "</strong> > DEL:" + !b;
-                    }
+                    render: (b) => (b ? ("<strong>" + b?.name + "</strong> > DEL:" + b.isDeleted) : "undefined")
                 },
             ]
         })
     );
+
+    var postsTable_IgnoreDeleted = $('#PostsTable_IgnoreDeleted').DataTable(
+        abp.libs.datatables.normalizeConfiguration({
+            serverSide: true,
+            paging: false,
+            order: [[1, "asc"]],
+            searching: false,
+            ajax: abp.libs.datatables.createAjax(abpQueryFilterDemo.posts.post.getList, () => ({ ignoreSoftDelete: true })),
+            columnDefs: [
+                {
+                    title: l('Post:Title'),
+                    data: "title"
+                },
+                {
+                    title: l('IsDeleted'),
+                    data: "isDeleted",
+                    render: (deleted) => (deleted ? "<strong>YES</strong>" : "NO")
+                },
+                {
+                    title: l('Blog'),
+                    data: "blog",
+                    render: (b) => (b ? ("<strong>" + b?.name + "</strong> > DEL:" + b.isDeleted) : "undefined")
+                },
+            ]
+        })
+    );
+
 });

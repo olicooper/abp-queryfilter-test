@@ -10,6 +10,8 @@
     "Post": "Post",
     "Posts": "Posts",
     "Post:Title": "Title",
-    "NoIncludes": "without 'include' filter"
+    "NoIncludes": "without 'include' filter",
+    "IsDeleted": "Is deleted?",
+    "IgnoreDeleted": "ignore deleted"
   }
 }

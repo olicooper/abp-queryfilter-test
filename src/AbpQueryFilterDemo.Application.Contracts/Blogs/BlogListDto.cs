@@ -19,6 +19,7 @@ namespace AbpQueryFilterDemo.Blogs
     public class BlogItem : EntityDto<Guid>
     {
         public string Name { get; set; }
+        public bool IsDeleted { get; set; }
     }
 
 }
