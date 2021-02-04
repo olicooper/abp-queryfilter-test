@@ -16,14 +16,23 @@
     </abp-script-bundle>
 }
 <div class="container">
-    <div class="p-4 text-center">
-        <h1 class="mt-2">@L["Blogs"]</h1>
-        <abp-table striped-rows="true" id="BlogsTable"></abp-table>
-        <h1 class="mt-4 border-top">@L["Posts"]</h1>
-        <abp-table striped-rows="true" id="PostsTable"></abp-table>
-        <h1 class="mt-4 border-top">@L["Posts"] (@L["NoIncludes"])</h1>
-        <abp-table striped-rows="true" id="PostsTable_ExclDetails"></abp-table>
-        <h1 class="mt-4 border-top">@L["Posts"] (@L["IgnoreDeleted"])</h1>
-        <abp-table striped-rows="true" id="PostsTable_IgnoreDeleted"></abp-table>
+    <div class="row">
+        <div class="col">
+            <h1 class="mt-2">@L["Blogs"] (@L["WithIncludes"])</h1>
+            <abp-table striped-rows="true" id="BlogsTable"></abp-table>
+            <h1 class="mt-2">@L["Blogs"] (@L["IgnoreDeleted"])</h1>
+            <abp-table striped-rows="true" id="BlogsTable_IgnoreDeleted"></abp-table>
+        </div>
+
+        <div class="col">
+            <h1 class="mt-4 border-top">@L["Posts"] (@L["WithIncludes"])</h1>
+            <abp-table striped-rows="true" id="PostsTable"></abp-table>
+            <h1 class="mt-4 border-top">@L["Posts"] (@L["IgnoreDeleted"])</h1>
+            <abp-table striped-rows="true" id="PostsTable_IgnoreDeleted"></abp-table>
+            <h1 class="mt-4 border-top">@L["Posts"] (@L["NoIncludes"])</h1>
+            <abp-table striped-rows="true" id="PostsTable_ExclDetails"></abp-table>
+            <h1 class="mt-4 border-top">@L["Posts"] (@L["NoIncludes"]) - using query syntax</h1>
+            <abp-table striped-rows="true" id="PostsTable_ExclDetails2"></abp-table>
+        </div>
     </div>
 </div>

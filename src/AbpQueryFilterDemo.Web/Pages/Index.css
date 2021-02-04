@@ -3,3 +3,7 @@
 .dataTables_scrollBody {
     min-height: unset !important;
 }
+.container {
+    margin: 0 !important;
+    max-width: unset;
+}
