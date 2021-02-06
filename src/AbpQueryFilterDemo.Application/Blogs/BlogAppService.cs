@@ -1,6 +1,7 @@
 ﻿using AbpQueryFilterDemo.Domain;
 using Microsoft.AspNetCore.Authorization;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
@@ -31,6 +32,8 @@ namespace AbpQueryFilterDemo.Blogs
             using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : DataFilter.Enable<ISoftDelete>())
             {
                 var query = await CreateFilteredQueryAsync(input);
+                
+                //query = query.Where(x => x.Posts.All(x => !x.IsDeleted));
 
                 var totalCount = await AsyncExecuter.CountAsync(query);
 
@@ -48,8 +51,7 @@ namespace AbpQueryFilterDemo.Blogs
         {
             return (await (input.IncludeDetails
                 ? ReadOnlyRepository.WithDetailsAsync(x => x.Posts)
-                : ReadOnlyRepository.GetQueryableAsync()))
-                    .IgnoreAbpQueryFilter(x => x.Posts);
+                : ReadOnlyRepository.GetQueryableAsync()));
         }
     }
 }
