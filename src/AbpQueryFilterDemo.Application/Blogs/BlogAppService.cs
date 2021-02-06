@@ -1,5 +1,6 @@
 ﻿using AbpQueryFilterDemo.Domain;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -32,8 +33,11 @@ namespace AbpQueryFilterDemo.Blogs
             using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : DataFilter.Enable<ISoftDelete>())
             {
                 var query = await CreateFilteredQueryAsync(input);
-                
-                //query = query.Where(x => x.Posts.All(x => !x.IsDeleted));
+
+                // see: https://docs.microsoft.com/en-us/ef/core/querying/single-split-queries#split-queries-1
+                //var query = (await ReadOnlyRepository.GetQueryableAsync()).Include(x => x.Posts).AsSplitQuery();
+
+                //query = query.Where(x => x.Posts.AsQueryable().Any(x => !x.IsDeleted));
 
                 var totalCount = await AsyncExecuter.CountAsync(query);
 

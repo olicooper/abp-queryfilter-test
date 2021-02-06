@@ -47,6 +47,7 @@ PostsRepository
 
 ### Docs
 * https://docs.microsoft.com/en-us/ef/core/querying/filters/
+* https://docs.microsoft.com/en-us/ef/core/querying/related-data/
 * https://docs.microsoft.com/en-us/ef/core/dbcontext-configuration/
 * https://docs.microsoft.com/en-us/ef/core/modeling/
 * https://docs.microsoft.com/en-us/ef/core/providers/writing-a-provider/
