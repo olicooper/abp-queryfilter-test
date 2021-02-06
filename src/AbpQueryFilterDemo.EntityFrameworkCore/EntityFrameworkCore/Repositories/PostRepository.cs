@@ -20,6 +20,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         /// Test 'GetList' method to ensure that filters are correctly applied when using LINQ 'query syntax' instead of the traditional 'method syntax' used by ABP.
         /// <para>
         ///     'Query syntax' is translatable to an Expression tree (see <see cref="IQueryable.Expression"/>), so this query should perform the same as queries written using 'method syntax'.
+        ///     See: https://stackoverflow.com/a/796341/2634818
         /// </para>
         /// </summary>
         public async Task<IQueryable<Post>> GetUsingQuerySyntaxAsync(bool includeDetails = false)
