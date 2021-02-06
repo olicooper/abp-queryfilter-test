@@ -33,6 +33,8 @@ PostsRepository
 * Domain
     * Data/AppDataSeedContributor.cs
     * Extensions/AbpQueryableExtensions.cs
+* Domain.Shared
+    * IMultiTenantExtension.cs/ISoftDeleteExtension.cs
 * EntityframeworkCore
     * AbpEntityFrameworkQueryableExtensions.cs
     * CustomAbpDbContext.cs
@@ -47,6 +49,8 @@ PostsRepository
 * https://docs.microsoft.com/en-us/ef/core/querying/filters/
 * https://docs.microsoft.com/en-us/ef/core/dbcontext-configuration/
 * https://docs.microsoft.com/en-us/ef/core/modeling/
+* https://docs.microsoft.com/en-us/ef/core/providers/writing-a-provider/
+* https://docs.microsoft.com/en-us/dotnet/api/system.linq.expressions.expressiontype?view=net-5.0
 * https://docs.microsoft.com/en-us/dotnet/csharp/expression-trees-interpreting/
 * https://docs.microsoft.com/en-us/archive/blogs/mattwar/linq-building-an-iqueryable-provider-series/
 
