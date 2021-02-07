@@ -3,11 +3,12 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using Volo.Abp;
 using Volo.Abp.Data;
 using Volo.Abp.EntityFrameworkCore;
@@ -18,6 +19,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 {
     public abstract class CustomAbpDbContext<TDbContext> : AbpDbContext<TDbContext> where TDbContext : DbContext
     {
+        private bool USECUSTOMFILTERING = true;
         protected CustomAbpDbContext(DbContextOptions<TDbContext> options) : base(options) { }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -27,12 +29,15 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             optionsBuilder.ReplaceService<IQueryTranslationPreprocessorFactory, CustomQueryTranslationPreprocessorFactory>();
 
             // todo: LazyServiceProvider is null when using powershell 'add-migration' etc. this needs investigating!
-            if (LazyServiceProvider != null)
+            if (USECUSTOMFILTERING && LazyServiceProvider != null)
             {
                 // Custom Extension to acces DataFilter and CurrentTenant 
                 // todo: does this work okay when the when the IServiceProvider is changed within the query context?
                 var extension = optionsBuilder.Options.FindExtension<AbpGlobalFiltersOptionsExtension>()
-                    ?? new AbpGlobalFiltersOptionsExtension(this.DataFilter, this.CurrentTenant);
+                    ?? new AbpGlobalFiltersOptionsExtension(
+                        this.DataFilter, 
+                        LazyServiceProvider.LazyGetRequiredService<IOptions<AbpDataFilterOptions>>(), 
+                        this.CurrentTenant);
 
                 ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
             }
@@ -42,14 +47,18 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         protected override void ConfigureGlobalFilters<TEntity>(ModelBuilder modelBuilder, IMutableEntityType mutableEntityType)
             where TEntity : class
         {
-            return;
+            if (USECUSTOMFILTERING) return;
+
+            base.ConfigureGlobalFilters<TEntity>(modelBuilder, mutableEntityType);
         }
 
         [Obsolete]
         protected override Expression<Func<TEntity, bool>> CreateFilterExpression<TEntity>()
            where TEntity : class
         {
-            return null; // DISABLE
+            if (USECUSTOMFILTERING) return null; // DISABLE
+            
+            return base.CreateFilterExpression<TEntity>();
         }
     }
 
@@ -60,11 +69,13 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         private DbContextOptionsExtensionInfo _info;
 
         public IDataFilter DataFilter { get; } = null;
+        public AbpDataFilterOptions DataFilterOptions { get; } = new AbpDataFilterOptions();
         public ICurrentTenant CurrentTenant { get; } = null;
 
-        public AbpGlobalFiltersOptionsExtension(IDataFilter dataFilter, ICurrentTenant currentTenant)
+        public AbpGlobalFiltersOptionsExtension(IDataFilter dataFilter, IOptions<AbpDataFilterOptions> filterOptions, ICurrentTenant currentTenant)
         {
             DataFilter = dataFilter;
+            DataFilterOptions = filterOptions.Value;
             CurrentTenant = currentTenant;
         }
 
@@ -90,8 +101,8 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
     // see: https://github.com/dotnet/efcore/blob/46996600cb3f152e3e21ee4d07effdc516dbf4e9/src/EFCore/Query/Internal/QueryTranslationPreprocessorFactory.cs
     public class CustomQueryTranslationPreprocessorFactory : IQueryTranslationPreprocessorFactory
     {
-        protected QueryTranslationPreprocessorDependencies Dependencies;
-        protected RelationalQueryTranslationPreprocessorDependencies RelationalDependencies;
+        protected QueryTranslationPreprocessorDependencies Dependencies { get; }
+        protected RelationalQueryTranslationPreprocessorDependencies RelationalDependencies { get; }
 
         public CustomQueryTranslationPreprocessorFactory(
             QueryTranslationPreprocessorDependencies dependencies,
@@ -138,6 +149,13 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             var q = base.Process(query);
             return q;
         }
+
+        public override Expression NormalizeQueryableMethod(Expression expression)
+        {
+            var query = base.NormalizeQueryableMethod(expression);
+            
+            return query;
+        }
     }
 
     public class AppendAbpFiltersExpressionVisitor : ExpressionVisitor
@@ -145,7 +163,19 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         public static readonly string AbpGlobalFiltersAppended = "AbpGlobalFiltersAppended";
 
         protected IDataFilter DataFilter => GlobalFiltersExtension?.DataFilter;
+        protected AbpDataFilterOptions DataFilterOptions => GlobalFiltersExtension?.DataFilterOptions;
         protected ICurrentTenant CurrentTenant => GlobalFiltersExtension?.CurrentTenant;
+
+        // todo: Remove this after IDataFilter is updated to expose the raw values
+        // todo: This will not work on medium-trust environments! https://stackoverflow.com/a/96020/2634818
+        //       The sooner we can stop using this, the better!
+        protected System.Collections.Concurrent.ConcurrentDictionary<Type, object> DataFilterCollection => 
+            DataFilter == null ? null : (_cachedDataFilterCollection == null ? _cachedDataFilterCollection = typeof(DataFilter)
+                .GetField("_filters", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(DataFilter) as System.Collections.Concurrent.ConcurrentDictionary<Type, object>
+            : _cachedDataFilterCollection);
+        private System.Collections.Concurrent.ConcurrentDictionary<Type, object> _cachedDataFilterCollection;
+
 
         protected readonly QueryCompilationContext QueryCompilationContext;
         protected readonly AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
@@ -156,6 +186,12 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         {
             QueryCompilationContext = queryCompilationContext;
             GlobalFiltersExtension = globalFiltersExtension;
+        }
+
+        // todo: cache 'Include'/'ThenInclude' statements
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            return base.VisitMethodCall(node);
         }
 
         // TODO: Make sure that this method emulates the functionality in AbpDbContext.ConfigureGlobalFilters
@@ -176,21 +212,14 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 var processedCount = 0;
 
                 // Apply filters to root entity
-                if (ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType))
-                {
-                    ++processedCount;
-                }
+                processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType);
 
                 // Apply filters to related entities
                 foreach (var childEntity in queryRootExpression.EntityType.GetNavigations())
                 {
                     if (childEntity == null) continue;
 
-                    if (ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType, childEntity))
-                    {
-                        ++processedCount;
-                    }
-
+                    processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType, childEntity);
                 }
 
                 QueryCompilationContext.Tags.Add(AbpGlobalFiltersAppended);
@@ -204,6 +233,8 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         // Because we know the filters we are creating at compile-time this method can be reasonably simple...
         // However, this method may not cover all scenarios and may need to emulate the 'ApplyQueryFilters' more closely
         // see: https://github.com/dotnet/efcore/blob/f54b9dcd189c91fc4b01b79c9387d23095819a8f/src/EFCore/Query/Internal/NavigationExpandingExpressionVisitor.cs#L1412-L1462
+        // see other: https://github.com/dotnet/efcore/blob/f54b9dcd189c91fc4b01b79c9387d23095819a8f/src/EFCore/Query/Internal/NavigationExpandingExpressionVisitor.cs#L844
+        // see other: https://github.com/dotnet/efcore/blob/da00fb69d615fa22a83dfee2077ad31b7bd15823/src/EFCore.Relational/Query/QuerySqlGenerator.cs#L979-L1002
         /* TODO:
          * - Optimise so filters are not applied if there is a 'Where' caluse that already satisfies the filter (or if a filter will conflict with a where statement?? i.e. IsDeleted==true && IsDeleted==false)
          * - Optimise so filters are not applied if the query doesn't 'Include' (eager load) any related entities AND there is no Explicit/Lazy loading (i.e. Where clause on related entity)
@@ -212,106 +243,177 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
          *      - DataFilter and CurrentTenant are always available and correctly scoped
          *      - Select statement, anonymous returns, abstract base classes, TPH/TPC inheritence, shadow properties etc.
          */
-        protected virtual bool ApplyAbpGlobalFilters(ref Expression sourceQuery, IEntityType sourceEntityType, INavigation targetEntity = null)
+        protected virtual int ApplyAbpGlobalFilters(ref Expression sourceQuery, IEntityType sourceEntityType, INavigation targetEntity = null)
         {
             // Don't want to apply filters to an abstract class
             // todo: check if this is appropriate
             if (sourceEntityType.BaseType != null && targetEntity == null)
             {
-                return false;
+                return 0;
             }
 
-            // todo: Allow processing/filtering of collections - the current filter brings back related 
-            //       entities without any filtering! This differs from Microsoft's query filtering.
-            if (targetEntity != null && targetEntity.IsCollection)
-            {
-                return false;
-            }
-
-            var hasAppliedAnyFilters = false;
-            var whereExpr = QueryableMethods.Where.MakeGenericMethod(sourceEntityType.ClrType);
-            var sourceParam = Expression.Parameter(sourceEntityType.ClrType, "x");
+            var appliedFilterCount = 0;
+            var whereMethodInfo = QueryableMethods.Where.MakeGenericMethod(sourceEntityType.ClrType);
+            var sourceParam = Expression.Parameter(sourceEntityType.ClrType, GetParamName(sourceEntityType.ClrType));
 
             IEntityType targetEntityType = targetEntity == null ? sourceEntityType : targetEntity.TargetEntityType;
-            Expression targetExpr = targetEntity == null ? sourceParam : Expression.MakeMemberAccess(sourceParam, targetEntity.PropertyInfo);
-            
-            if (targetEntityType.ClrType.IsAssignableTo<ISoftDelete>())
+
+            // Apply ISoftDelete filter
+            if (typeof(ISoftDelete).IsAssignableFrom(targetEntityType.ClrType))
             {
-                // todo: Remove this method after IDataFilter and ISoftDelete contain appropriate generic interfaces
-                var entitySoftDeleteEnabled = (bool)typeof(DataFilter)
-                    .GetMethod(nameof(DataFilter.IsEnabled))
-                    .MakeGenericMethod(typeof(ISoftDelete<>).MakeGenericType(targetEntityType.ClrType))
-                    .Invoke(DataFilter, null);
+                // note: this doesn't work because the call to 'IsEnabled' creates an entry which resolves automatically to 'true'
+                //var entitySoftDeleteEnabled = (bool)typeof(DataFilter)
+                //    .GetMethod(nameof(DataFilter.IsEnabled))
+                //    .MakeGenericMethod(typeof(ISoftDelete<>).MakeGenericType(targetEntityType.ClrType))
+                //    .Invoke(DataFilter, null);
+
+                // todo: Update this after IDataFilter and ISoftDelete contain appropriate generic interfaces
+                var entitySoftDeleteEnabled = GetEntityFilterEnabled(typeof(ISoftDelete<>), targetEntityType.ClrType);
 
                 // Is ISoftDelete enabled for the specific entity OR for the general query
                 if (DataFilter.IsEnabled<ISoftDelete>() && entitySoftDeleteEnabled || entitySoftDeleteEnabled)
                 {
-                    //if (targetType.GetMember("IsDeleted").Any())
-                    //{
-                        var softDeleteExpr =
-                            // x => !x.Blog.IsDeleted
-                            Expression.Lambda(
-                                // !x.Blog.IsDeleted
-                                Expression.Not(
-                                    // x.Blog.IsDeleted
-                                    Expression.MakeMemberAccess(
-                                        // x.Blog
-                                        targetExpr,
-                                        //targetEntity.TargetEntityType.FindProperty
-                                        Expression.Property(targetExpr, "IsDeleted").Member
-                                    )
-                                ),
-                                sourceParam
-                            );
+                    var softDeleteExpr = 
+                        EnsureCollectionWrapped(param =>
+                            // !e.Blog.IsDeleted
+                            Expression.Not(
+                                // e.Blog.IsDeleted
+                                Expression.MakeMemberAccess(
+                                    // e.Blog
+                                    param,
+                                    //todo: can we use targetEntity.TargetEntityType.FindProperty() method?
+                                    Expression.Property(param, "IsDeleted").Member
+                                )
+                            ),
+                            sourceParam,
+                            targetEntity);
 
-                        // PostQuery.Where(x => !x.Blog.IsDeleted)
-                        sourceQuery = Expression.Call(whereExpr, sourceQuery, softDeleteExpr);
+                    sourceQuery = Expression.Call(whereMethodInfo, sourceQuery, Expression.Lambda(softDeleteExpr, sourceParam));
 
-                        hasAppliedAnyFilters = true;
-                    //}
+                    ++appliedFilterCount;
                 }
             }
 
-            if (targetEntityType.ClrType.IsAssignableTo<IMultiTenant>())
+            // Apply IMultiTenant filter
+            //if (targetEntityType.ClrType.GetInterface(nameof(IMultiTenant)) != null))
+            if (typeof(IMultiTenant).IsAssignableFrom(targetEntityType.ClrType))
             {
-                // todo: Remove this method after IDataFilter and IMultiTenant contain appropriate generic interfaces
-                var entityMultiTenantEnabled = (bool)typeof(DataFilter)
-                    .GetMethod(nameof(DataFilter.IsEnabled))
-                    .MakeGenericMethod(typeof(IMultiTenant<>).MakeGenericType(targetEntityType.ClrType))
-                    .Invoke(DataFilter, null);
+                // note: this doesn't work because the call to 'IsEnabled' creates an entry which resolves automatically to 'true'
+                //var entityMultiTenantEnabled = (bool)typeof(DataFilter)
+                //    .GetMethod(nameof(DataFilter.IsEnabled))
+                //    .MakeGenericMethod(typeof(IMultiTenant<>).MakeGenericType(targetEntityType.ClrType))
+                //    .Invoke(DataFilter, null);
+
+                // todo: Update this after IDataFilter and IMultiTenant contain appropriate generic interfaces
+                var entityMultiTenantEnabled = GetEntityFilterEnabled(typeof(IMultiTenant<>), targetEntityType.ClrType);
 
                 // Is IMultiTenant enabled for the specific entity OR for the general query
                 if (DataFilter.IsEnabled<IMultiTenant>() && entityMultiTenantEnabled || entityMultiTenantEnabled)
                 {
-                    //var tenantIdMember = targetType.GetMember("TenantId").FirstOrDefault();
-                    //if (tenantIdMember != null)
-                    //{
-                        // todo: a 'Convert' expression might need to wrap the 'Equal' expression?
-                        var tenantIdExpr =
-                            // x => x.Blog.TenantId == "GUID"
-                            Expression.Lambda(
-                                // x.Blog.TenantId == "GUID"
-                                Expression.Equal(
-                                    // x.Blog.TenantId
-                                    Expression.MakeMemberAccess(
-                                        // x.Blog
-                                        targetExpr,
-                                        Expression.Property(targetExpr, "TenantId").Member //tenantIdMember
-                                    ),
-                                    Expression.Constant(CurrentTenant.Id)
+                    // todo: a 'Convert' expression might need to wrap the 'Equal' expression?
+                    var tenantIdExpr =
+                        EnsureCollectionWrapped(param =>
+                            // x.Blog.TenantId == "GUID"
+                            Expression.Equal(
+                                // x.Blog.TenantId
+                                Expression.MakeMemberAccess(
+                                    // x.Blog
+                                    param,
+                                    Expression.Property(param, "TenantId").Member //tenantIdMember
                                 ),
-                                sourceParam
-                            );
+                                Expression.Constant(CurrentTenant.Id)
+                            ),
+                            sourceParam,
+                            targetEntity);
 
-                        // PostQuery.Where(x => x.Blog.TenantId == "GUID")
-                        sourceQuery = Expression.Call(whereExpr, sourceQuery, tenantIdExpr);
+                    // sourceQuery.Where(x => x.Blog.TenantId == "GUID")
+                    sourceQuery = Expression.Call(whereMethodInfo, sourceQuery, Expression.Lambda(tenantIdExpr, sourceParam));
 
-                        hasAppliedAnyFilters = true;
-                    //}
+                    ++appliedFilterCount;
                 }
             }
 
-            return hasAppliedAnyFilters;
+            // Reduce 'Where' clauses to a single clause
+            //if (sourceQuery)
+
+            return appliedFilterCount;
+        }
+
+        // todo: We are enforcing eager loding of collections here which might not be wanted! But if the query has 'Include' for this collection then we are safe to do this.
+        // todo: This doesn't actually filter collections because we need to call 'Select' instead of 'Where' e.g. 'blogQuery.Select(e => e.Posts.Where(p => !p.IsDeleted)))
+        protected static Expression EnsureCollectionWrapped(
+            Func<Expression, Expression> expressionTemplate,
+            ParameterExpression sourceParam,
+            INavigation targetEntity = null)
+        {
+            if (targetEntity != null && targetEntity.IsCollection)
+            {
+                Expression targetExpr = Expression.MakeMemberAccess(sourceParam, targetEntity.PropertyInfo);
+
+                var collectionParam = Expression.Parameter(
+                    targetEntity.TargetEntityType.ClrType,
+                    GetParamName(targetEntity.TargetEntityType.ClrType)
+                );
+
+                // 1. Get the expression template with the collection as the target parameter
+                var innerExpression = expressionTemplate.Invoke(collectionParam);
+
+                // 2. Append AsQueryable() to ensure collection isn't loaded to memory
+                targetExpr =
+                    Expression.Call(
+                        instance: null,
+                        method: QueryableMethods.AsQueryable.MakeGenericMethod(targetEntity.TargetEntityType.ClrType),
+                        arguments: new[] { targetExpr }
+                    );
+
+                // 3. Wrap the expression template in an Any() call
+                return
+                    // e.Blogs.AsQueryable().Any(c0 => !c0.IsDeleted)
+                    Expression.Call(
+                        instance: null,
+                        // note: Use this version when the source is IEnumerable
+                        //typeof(Enumerable).GetMethods().Single(mi => mi.Name == "Any" && mi.GetParameters().Count() == 2)
+                        method: QueryableMethods.AnyWithPredicate.MakeGenericMethod(targetEntity.TargetEntityType.ClrType),
+                        arguments: new[]
+                        { 
+                            // e.Blogs.AsQueryable()
+                            targetExpr,
+                            // c0 => !c0.IsDeleted
+                            Expression.Lambda(
+                                // !c0.IsDeleted
+                                innerExpression,
+                                // c0
+                                collectionParam
+                            )
+                        }
+                    );
+            }
+            // For non-collection navigations, just return the original expression
+            else
+            {
+                return expressionTemplate.Invoke(targetEntity == null 
+                    ? sourceParam 
+                    : Expression.MakeMemberAccess(sourceParam, targetEntity.PropertyInfo)
+                );
+            }
+        }
+
+        protected static string GetParamName(Type clrType) => char.ToLowerInvariant(clrType.Name[0]).ToString();
+
+        protected bool GetEntityFilterEnabled(Type filterType, Type entityType)
+        {
+            var type = filterType.MakeGenericType(entityType);
+
+            if (DataFilterCollection != null && DataFilterCollection.TryGetValue(type, out var filter))
+            {
+                return (bool)filter.GetType()
+                    .GetProperty("IsEnabled", BindingFlags.Public | BindingFlags.Instance)
+                    .GetValue(filter);
+            }
+
+            // To be safe, this assumes the filter is enabled if  we can't access DataFilterCollection or there is no default state set.
+            // Based on DataFilter.EnsureInitialized() method. 
+            return DataFilterOptions?.DefaultStates.GetOrDefault(type)?.IsEnabled ?? true;
         }
     }
 
