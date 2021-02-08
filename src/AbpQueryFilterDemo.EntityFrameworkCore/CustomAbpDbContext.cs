@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using JetBrains.Annotations;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -6,7 +7,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -28,6 +28,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             base.OnConfiguring(optionsBuilder);
 
             optionsBuilder.ReplaceService<IQueryTranslationPreprocessorFactory, CustomQueryTranslationPreprocessorFactory>();
+            optionsBuilder.ReplaceService<ICompiledQueryCacheKeyGenerator, CompiledQueryWithAbpFilterCacheKeyGenerator>();
 
             // todo: LazyServiceProvider is null when using powershell 'add-migration' etc. this needs investigating!
             if (USECUSTOMFILTERING && LazyServiceProvider != null)
@@ -63,6 +64,103 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         }
     }
 
+    // see: https://github.com/dotnet/efcore/blob/f54b9dcd189c91fc4b01b79c9387d23095819a8f/src/EFCore.Relational/Query/RelationalCompiledQueryCacheKeyGenerator.cs
+    public class CompiledQueryWithAbpFilterCacheKeyGenerator : RelationalCompiledQueryCacheKeyGenerator, ICompiledQueryCacheKeyGenerator
+    {
+        protected AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
+
+        public CompiledQueryWithAbpFilterCacheKeyGenerator(
+            [NotNull] CompiledQueryCacheKeyGeneratorDependencies dependencies,
+            [NotNull] RelationalCompiledQueryCacheKeyGeneratorDependencies relationalDependencies,
+            // todo: create a dependencies class to hold the dependencies below, then inject it via a new Abp database provider
+            [NotNull] IDbContextOptions contextOptions)
+            : base(dependencies, relationalDependencies)
+        {
+            GlobalFiltersExtension = contextOptions.FindExtension<AbpGlobalFiltersOptionsExtension>();
+        }
+
+        /// <inheritdoc />
+        public override object GenerateCacheKey(Expression query, bool async)
+           => CheckCachedAbpFilters(query, async);
+
+        protected object CheckCachedAbpFilters(Expression query, bool async)
+        {
+            var currentFilters = GlobalFiltersExtension.FilterCollection.Values
+                .Select(x => GetFilterValue(x))
+                .ToHashSet();
+
+            return new CompiledQueryWithAbpFilterCacheKey(
+                base.GenerateCacheKeyCore(query, async),
+                false,
+                currentFilters);
+        }
+
+        private static FilterValue GetFilterValue(object obj)
+        {
+            var type = obj.GetType();
+            bool isEnabled = false;
+
+            try
+            {
+                // todo: remove this once IDataFilter is updated :)
+                isEnabled = (bool)type
+                .GetProperty("IsEnabled", BindingFlags.Public | BindingFlags.Instance)
+                .GetValue(obj);
+            }
+            catch { }
+
+            return new FilterValue(type, isEnabled);
+        }
+
+        protected readonly struct CompiledQueryWithAbpFilterCacheKey : IEquatable<CompiledQueryWithAbpFilterCacheKey>
+        {
+            private readonly RelationalCompiledQueryCacheKey _relationalCompiledQueryCacheKey;
+            private readonly bool _ignoreAbpDataFilters;
+            private readonly HashSet<FilterValue> _appliedDataFilters;
+
+            public CompiledQueryWithAbpFilterCacheKey(
+                RelationalCompiledQueryCacheKey relationalCompiledQueryCacheKey,
+                bool ignoreAbpDataFilters,
+                HashSet<FilterValue> appliedDataFilters)
+            {
+                _relationalCompiledQueryCacheKey = relationalCompiledQueryCacheKey;
+                _ignoreAbpDataFilters = ignoreAbpDataFilters;
+                _appliedDataFilters = appliedDataFilters;
+            }
+
+            public override bool Equals(object? obj)
+                => (obj is CompiledQueryWithAbpFilterCacheKey abpFilterKey && Equals(abpFilterKey));
+
+            public bool Equals(CompiledQueryWithAbpFilterCacheKey other)
+                => _relationalCompiledQueryCacheKey.Equals(other._relationalCompiledQueryCacheKey)
+                    && _ignoreAbpDataFilters == other._ignoreAbpDataFilters
+                    && _appliedDataFilters == other._appliedDataFilters;
+
+            public override int GetHashCode()
+                => HashCode.Combine(_ignoreAbpDataFilters, _appliedDataFilters);
+        }
+
+        protected struct FilterValue
+        {
+            public readonly Type Type;
+            public readonly bool IsEnabled;
+
+            public FilterValue(Type type, bool isEnabled)
+            {
+                Type = type;
+                IsEnabled = isEnabled;
+            }
+
+            public override bool Equals(object obj)
+                => obj is FilterValue value &&
+                       IsEnabled == value.IsEnabled &&
+                       EqualityComparer<Type>.Default.Equals(Type, value.Type);
+
+            public override int GetHashCode()
+                => HashCode.Combine(IsEnabled, Type);
+        }
+    }
+
     // Original from: https://github.com/dotnet/efcore/blob/b8483772f298f5ada8b2b5253a9904c93c34919f/test/EFCore.Tests/ServiceProviderCacheTest.cs#L226-L264
     public class AbpGlobalFiltersOptionsExtension : IDbContextOptionsExtension
     {
@@ -72,6 +170,16 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         public IDataFilter DataFilter { get; } = null;
         public AbpDataFilterOptions DataFilterOptions { get; } = new AbpDataFilterOptions();
         public ICurrentTenant CurrentTenant { get; } = null;
+
+        // todo: Remove this after IDataFilter is updated to expose the raw values
+        // todo: This will not work on medium-trust environments! https://stackoverflow.com/a/96020/2634818
+        //       The sooner we can stop using this, the better!
+        public IReadOnlyDictionary<Type, object> FilterCollection =>
+            DataFilter == null ? null : (_cachedDataFilterCollection == null ? _cachedDataFilterCollection = typeof(DataFilter)
+                .GetField("_filters", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(DataFilter) as IReadOnlyDictionary<Type, object>
+            : _cachedDataFilterCollection);
+        private IReadOnlyDictionary<Type, object> _cachedDataFilterCollection;
 
         public AbpGlobalFiltersOptionsExtension(IDataFilter dataFilter, IOptions<AbpDataFilterOptions> filterOptions, ICurrentTenant currentTenant)
         {
@@ -179,20 +287,11 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         protected AbpDataFilterOptions DataFilterOptions => GlobalFiltersExtension?.DataFilterOptions;
         protected ICurrentTenant CurrentTenant => GlobalFiltersExtension?.CurrentTenant;
 
-        // todo: Remove this after IDataFilter is updated to expose the raw values
-        // todo: This will not work on medium-trust environments! https://stackoverflow.com/a/96020/2634818
-        //       The sooner we can stop using this, the better!
-        protected System.Collections.Concurrent.ConcurrentDictionary<Type, object> DataFilterCollection => 
-            DataFilter == null ? null : (_cachedDataFilterCollection == null ? _cachedDataFilterCollection = typeof(DataFilter)
-                .GetField("_filters", BindingFlags.NonPublic | BindingFlags.Instance)
-                ?.GetValue(DataFilter) as System.Collections.Concurrent.ConcurrentDictionary<Type, object>
-            : _cachedDataFilterCollection);
-        private System.Collections.Concurrent.ConcurrentDictionary<Type, object> _cachedDataFilterCollection;
-
         protected readonly QueryCompilationContext QueryCompilationContext;
         protected readonly AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
 
         private Dictionary<IEntityType, HashSet<LambdaExpression>> _parameterizedQueryFilterPredicateCache;
+        private readonly HashSet<string> _parameterNames = new();
 
         public AppendAbpFiltersExpressionVisitor(
             [NotNull] QueryCompilationContext queryCompilationContext,
@@ -217,7 +316,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
             Check.NotNull(methodCallExpression, nameof(methodCallExpression));
 
-            // Handle 'IgnorAbpQueryFilters()' method calls
+            // Handle 'IgnoreAbpQueryFilters()' method calls
             if (methodCallExpression.Method.DeclaringType == typeof(AbpQueryableExtensions_DemoProj)
                 && methodCallExpression.Method.IsGenericMethod
                 && ExtractAbpQueryFilterMetadata(methodCallExpression) is Expression expression)
@@ -318,19 +417,13 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
             List<Expression> expressionCache = new();
             var whereMethodInfo = QueryableMethods.Where.MakeGenericMethod(sourceEntityType.ClrType);
-            var sourceParam = Expression.Parameter(sourceEntityType.ClrType, GetParamName(sourceEntityType.ClrType));
+            var sourceParam = Expression.Parameter(sourceEntityType.ClrType, GetParamName(sourceEntityType, _parameterNames));
 
             IEntityType targetEntityType = targetEntity == null ? sourceEntityType : targetEntity.TargetEntityType;
 
             // Apply ISoftDelete filter
             if (typeof(ISoftDelete).IsAssignableFrom(targetEntityType.ClrType))
             {
-                // note: this doesn't work because the call to 'IsEnabled' creates an entry which resolves automatically to 'true'
-                //var entitySoftDeleteEnabled = (bool)typeof(DataFilter)
-                //    .GetMethod(nameof(DataFilter.IsEnabled))
-                //    .MakeGenericMethod(typeof(ISoftDelete<>).MakeGenericType(targetEntityType.ClrType))
-                //    .Invoke(DataFilter, null);
-
                 // todo: Update this after IDataFilter and ISoftDelete contain appropriate generic interfaces
                 var entitySoftDelete = GetEntityFilter(typeof(ISoftDelete<>), targetEntityType.ClrType);
                 var softDeleteEnabled = DataFilter.IsEnabled<ISoftDelete>();
@@ -350,6 +443,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                                 )
                             ),
                             sourceParam,
+                            _parameterNames,
                             targetEntity);
 
                     // !x.Blog.IsDeleted
@@ -358,15 +452,8 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             }
 
             // Apply IMultiTenant filter
-            //if (targetEntityType.ClrType.GetInterface(nameof(IMultiTenant)) != null))
             if (typeof(IMultiTenant).IsAssignableFrom(targetEntityType.ClrType))
             {
-                // note: this doesn't work because the call to 'IsEnabled' creates an entry which resolves automatically to 'true'
-                //var entityMultiTenantEnabled = (bool)typeof(DataFilter)
-                //    .GetMethod(nameof(DataFilter.IsEnabled))
-                //    .MakeGenericMethod(typeof(IMultiTenant<>).MakeGenericType(targetEntityType.ClrType))
-                //    .Invoke(DataFilter, null);
-
                 // todo: Update this after IDataFilter and IMultiTenant contain appropriate generic interfaces
                 var entityMultiTenant = GetEntityFilter(typeof(IMultiTenant<>), targetEntityType.ClrType);
                 var multiTenantEnabled = DataFilter.IsEnabled<IMultiTenant>();
@@ -387,6 +474,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                                 Expression.Constant(CurrentTenant.Id)
                             ),
                             sourceParam,
+                            _parameterNames,
                             targetEntity);
 
                     // x.Blog.TenantId == "GUID"
@@ -413,6 +501,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         protected static Expression EnsureCollectionWrapped(
             Func<Expression, Expression> expressionTemplate,
             ParameterExpression sourceParam,
+            HashSet<string> parameterNames,
             INavigation targetEntity = null)
         {
             if (targetEntity != null && targetEntity.IsCollection)
@@ -421,7 +510,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
                 var collectionParam = Expression.Parameter(
                     targetEntity.TargetEntityType.ClrType,
-                    GetParamName(targetEntity.TargetEntityType.ClrType)
+                    GetParamName(targetEntity.TargetEntityType, parameterNames)
                 );
 
                 // 1. Get the expression template with the collection as the target parameter
@@ -493,13 +582,27 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                     ? TryGetQueryRootExpression(methodCallExpression.Arguments[0])
                     : expression));
 
-        protected static string GetParamName(Type clrType) => char.ToLowerInvariant(clrType.Name[0]).ToString();
+        // see: https://github.com/dotnet/efcore/blob/f54b9dcd189c91fc4b01b79c9387d23095819a8f/src/EFCore/Query/Internal/NavigationExpandingExpressionVisitor.cs#L1625
+        protected static string GetParamName(IEntityType entityType, HashSet<string> existingParamNames)
+        {
+            var uniqueName = entityType.ShortName()[0].ToString().ToLowerInvariant();
+            var index = 0;
+
+            while (existingParamNames.Contains(uniqueName))
+            {
+                uniqueName = $"{uniqueName}{index++}";
+            }
+
+            existingParamNames.Add(uniqueName);
+
+            return uniqueName;
+        }
 
         protected (bool IsSet, bool IsEnabled) GetEntityFilter(Type filterType, Type entityType)
         {
             var type = filterType.MakeGenericType(entityType);
 
-            if (DataFilterCollection != null && DataFilterCollection.TryGetValue(type, out var filter))
+            if (GlobalFiltersExtension.FilterCollection != null && GlobalFiltersExtension.FilterCollection.TryGetValue(type, out var filter))
             {
                 return (true, (bool)filter.GetType()
                     .GetProperty("IsEnabled", BindingFlags.Public | BindingFlags.Instance)
