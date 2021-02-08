@@ -127,6 +127,8 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
     {
         protected AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
 
+        private Dictionary<IEntityType, HashSet<LambdaExpression>> _parameterizedQueryFilterPredicateCache = new();
+
         public CustomQueryTranslationPreprocessor(
             [NotNull] QueryTranslationPreprocessorDependencies dependencies,
             [NotNull] RelationalQueryTranslationPreprocessorDependencies relationalDependencies,
@@ -143,7 +145,10 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         {
             if (GlobalFiltersExtension != null && GlobalFiltersExtension.DataFilter != null)
             {
-                query = new AppendAbpFiltersExpressionVisitor(QueryCompilationContext, in GlobalFiltersExtension)
+                query = new AppendAbpFiltersExpressionVisitor(
+                    QueryCompilationContext, 
+                    in GlobalFiltersExtension, 
+                    ref _parameterizedQueryFilterPredicateCache)
                    .Visit(query);
             }
 
@@ -187,12 +192,17 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         protected readonly QueryCompilationContext QueryCompilationContext;
         protected readonly AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
 
+        private Dictionary<IEntityType, HashSet<LambdaExpression>> _parameterizedQueryFilterPredicateCache;
+
         public AppendAbpFiltersExpressionVisitor(
             [NotNull] QueryCompilationContext queryCompilationContext,
-            [NotNull] in AbpGlobalFiltersOptionsExtension globalFiltersExtension)
+            [NotNull] in AbpGlobalFiltersOptionsExtension globalFiltersExtension,
+            [NotNull] ref Dictionary<IEntityType, HashSet<LambdaExpression>> parameterizedQueryFilterPredicateCache)
         {
             QueryCompilationContext = queryCompilationContext;
             GlobalFiltersExtension = globalFiltersExtension;
+
+            _parameterizedQueryFilterPredicateCache = parameterizedQueryFilterPredicateCache;
         }
 
         // todo: cache 'Include'/'ThenInclude' statements not complete!
@@ -213,6 +223,29 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 && ExtractAbpQueryFilterMetadata(methodCallExpression) is Expression expression)
             {
                 return expression;
+            }
+
+            // Extract 'Include(...)' expression information
+            if (methodCallExpression.Method.DeclaringType == typeof(Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions)
+                && methodCallExpression.Method.IsGenericMethod
+                && (methodCallExpression.Method.Name == nameof(EntityFrameworkQueryableExtensions.Include)
+                    /*|| methodCallExpression.Method.Name == nameof(EntityFrameworkQueryableExtensions.ThenInclude)*/))
+            {
+                // todo: recursion is not fun when ExpressionVisitor is already recursive, this needs improving!
+                Expression rootExpression = TryGetQueryRootExpression(methodCallExpression);
+                if (rootExpression is QueryRootExpression queryRoot)
+                {
+                    var lambda = methodCallExpression.Arguments[1].UnwrapLambdaFromQuote();
+
+                    if (_parameterizedQueryFilterPredicateCache.ContainsKey(queryRoot.EntityType))
+                    {
+                        _parameterizedQueryFilterPredicateCache[queryRoot.EntityType].Add(lambda);
+                    }
+                    else
+                    {
+                        _parameterizedQueryFilterPredicateCache.Add(queryRoot.EntityType, new() { lambda });
+                    }
+                }
             }
 
             return base.VisitMethodCall(methodCallExpression);
@@ -239,12 +272,14 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 // Apply filters to root entity
                 processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType);
 
-                // Apply filters to related entities
-                if (!QueryCompilationContext.IgnoreAutoIncludes)
+                // Apply filters to related entities only if 'Include(...)' was used on the query
+                if (!QueryCompilationContext.IgnoreAutoIncludes && _parameterizedQueryFilterPredicateCache.ContainsKey(queryRootExpression.EntityType))
                 {
                     foreach (var childEntity in queryRootExpression.EntityType.GetNavigations())
                     {
                         if (childEntity == null) continue;
+
+                        // handle filter application based on _parameterizedQueryFilterPredicateCache
 
                         processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType, childEntity);
                     }
@@ -450,6 +485,13 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             return null;
         }
 #nullable disable
+
+        protected static Expression TryGetQueryRootExpression(Expression expression)
+            => (expression is QueryRootExpression 
+                ? expression 
+                : (expression is MethodCallExpression methodCallExpression 
+                    ? TryGetQueryRootExpression(methodCallExpression.Arguments[0])
+                    : expression));
 
         protected static string GetParamName(Type clrType) => char.ToLowerInvariant(clrType.Name[0]).ToString();
 
