@@ -12,6 +12,17 @@ Similarly, if you want to return *ALL* posts and you have the parent `Blog` as a
 
 This should fix various issues which have been raised in the past - see [linked issues](#linked-issues)
 
+### Example
+```csharp
+// Even when the 'Blog' entity is deleted, this should allow the Blog entity to be returned with the Posts
+using (DataFilter.Disable<ISoftDelete<Blog>>())
+{
+  var postWithDeletedBlog = PostsRepository
+    .Include(x => x.Blog)
+    .ToListAsync();
+}
+```
+
 ## The method
 
 1. Disable the use of global query filters (the ABP `ModelBuilder.OnModelCreating()` query filter generation code is bypassed, so no calls to `Entity.UseQueryFilter()`)
@@ -23,15 +34,6 @@ This sounds simpler than it actually is so the following issues are present in t
 * Different DB providers implement things differently - Only Relational EF provider is currently implemented.
 * Queries are cached so updating queries is difficult when filters change - If filters change at runtime, they don't take effect.
 * Filters shouldn't be applied if the navigation items are not going to be loaded - This isn't fully operational yet.
-
-### Example
-```csharp
-PostsRepository
-    .Include(x => x.Blog)
-    // Even when the parent 'Blog' entity is deleted, this should allow the entity to be returned
-    .IgnoreAbpQueryFilter(x => x.Blog)
-    .ToListAsync();
-```
 
 ## Running the project
 
