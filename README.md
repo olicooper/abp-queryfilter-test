@@ -36,7 +36,6 @@ PostsRepository
 * Domain.Shared
     * IMultiTenantExtension.cs/ISoftDeleteExtension.cs
 * EntityframeworkCore
-    * AbpEntityFrameworkQueryableExtensions.cs
     * CustomAbpDbContext.cs
     * Repositories/PostRepository.cs
 * Web

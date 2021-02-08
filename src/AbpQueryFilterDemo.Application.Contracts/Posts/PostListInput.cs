@@ -13,6 +13,10 @@
         /// </summary>
         public bool IgnoreSoftDelete { get; set; } = false;
         /// <summary>
+        /// Disables the 'IsDeleted' query filter for the 'Blog' entity.
+        /// </summary>
+        public bool IgnoreSoftDeleteForBlog { get; set; } = false;
+        /// <summary>
         /// Use LINQ query syntax rather than method syntax 
         /// <para>
         ///     This only works with <see cref="IncludeDetails"/> == <see langword="true" />

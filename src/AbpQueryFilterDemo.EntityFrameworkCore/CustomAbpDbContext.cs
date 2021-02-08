@@ -161,7 +161,14 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
     public class AppendAbpFiltersExpressionVisitor : ExpressionVisitor
     {
-        public static readonly string AbpGlobalFiltersAppended = "AbpGlobalFiltersAppended";
+        internal static readonly string AbpQueryFiltersAppliedTag = "AbpQueryFiltersApplied";
+
+        internal static readonly string IgnoreAbpQueryFiltersTag = nameof(AbpQueryableExtensions_DemoProj.IgnoreAbpQueryFilters);
+
+        internal static readonly MethodInfo IgnoreAbpQueryFiltersMethodInfo
+            = typeof(AbpQueryableExtensions_DemoProj)
+                .GetTypeInfo()
+                .GetDeclaredMethod(nameof(AbpQueryableExtensions_DemoProj.IgnoreAbpQueryFilters));
 
         protected IDataFilter DataFilter => GlobalFiltersExtension?.DataFilter;
         protected AbpDataFilterOptions DataFilterOptions => GlobalFiltersExtension?.DataFilterOptions;
@@ -177,7 +184,6 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             : _cachedDataFilterCollection);
         private System.Collections.Concurrent.ConcurrentDictionary<Type, object> _cachedDataFilterCollection;
 
-
         protected readonly QueryCompilationContext QueryCompilationContext;
         protected readonly AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
 
@@ -189,17 +195,35 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             GlobalFiltersExtension = globalFiltersExtension;
         }
 
-        // todo: cache 'Include'/'ThenInclude' statements
-        protected override Expression VisitMethodCall(MethodCallExpression node)
+        // todo: cache 'Include'/'ThenInclude' statements not complete!
+        protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
         {
-            return base.VisitMethodCall(node);
+            // Stop application of filters if they have already been applied
+            if (QueryCompilationContext.Tags.Contains(IgnoreAbpQueryFiltersTag)
+                || QueryCompilationContext.Tags.Contains(AbpQueryFiltersAppliedTag))
+            {
+                return base.VisitMethodCall(methodCallExpression);
+            }
+
+            Check.NotNull(methodCallExpression, nameof(methodCallExpression));
+
+            // Handle 'IgnorAbpQueryFilters()' method calls
+            if (methodCallExpression.Method.DeclaringType == typeof(AbpQueryableExtensions_DemoProj)
+                && methodCallExpression.Method.IsGenericMethod
+                && ExtractAbpQueryFilterMetadata(methodCallExpression) is Expression expression)
+            {
+                return expression;
+            }
+
+            return base.VisitMethodCall(methodCallExpression);
         }
 
         // TODO: Make sure that this method emulates the functionality in AbpDbContext.ConfigureGlobalFilters
         protected override Expression VisitExtension(Expression extensionExpression)
         {
-            // Stop application of filters if they have already been applied
-            if (QueryCompilationContext.Tags.Contains(AbpGlobalFiltersAppended))
+            // Stop application of filters if they have already been applied or 'IgnoreAbpQueryFilters()' has been requested
+            if (QueryCompilationContext.Tags.Contains(IgnoreAbpQueryFiltersTag) 
+                || QueryCompilationContext.Tags.Contains(AbpQueryFiltersAppliedTag))
             {
                 return base.VisitExtension(extensionExpression);
             }
@@ -216,14 +240,17 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType);
 
                 // Apply filters to related entities
-                foreach (var childEntity in queryRootExpression.EntityType.GetNavigations())
+                if (!QueryCompilationContext.IgnoreAutoIncludes)
                 {
-                    if (childEntity == null) continue;
+                    foreach (var childEntity in queryRootExpression.EntityType.GetNavigations())
+                    {
+                        if (childEntity == null) continue;
 
-                    processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType, childEntity);
+                        processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType, childEntity);
+                    }
                 }
 
-                QueryCompilationContext.Tags.Add(AbpGlobalFiltersAppended);
+                QueryCompilationContext.Tags.Add(AbpQueryFiltersAppliedTag);
 
                 return Visit(modifiedQuery);
             }
@@ -240,6 +267,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
          * - Optimise so filters are not applied if there is a 'Where' caluse that already satisfies the filter (or if a filter will conflict with a where statement?? i.e. IsDeleted==true && IsDeleted==false)
          * - Optimise so filters are not applied if the query doesn't 'Include' (eager load) any related entities AND there is no Explicit/Lazy loading (i.e. Where clause on related entity)
          * - Support custom DataFilters?
+         * - Handle when 'RelationalQueryableExtensions.AsSingleQuery()' and 'RelationalQueryableExtensions.AsSplitQuery()' are used
          * - Test complex scenarios
          *      - Test if the DataFilter and CurrentTenant are always available and correctly scoped (multiple DbContexts, using migrations etc)
          *      - Select statement, anonymous returns, abstract base classes, TPH/TPC inheritence, shadow properties etc.
@@ -269,10 +297,10 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 //    .Invoke(DataFilter, null);
 
                 // todo: Update this after IDataFilter and ISoftDelete contain appropriate generic interfaces
-                var entitySoftDeleteEnabled = GetEntityFilterEnabled(typeof(ISoftDelete<>), targetEntityType.ClrType);
-
-                // Is ISoftDelete enabled for the specific entity OR for the general query
-                if (DataFilter.IsEnabled<ISoftDelete>() && entitySoftDeleteEnabled || entitySoftDeleteEnabled)
+                var entitySoftDelete = GetEntityFilter(typeof(ISoftDelete<>), targetEntityType.ClrType);
+                var softDeleteEnabled = DataFilter.IsEnabled<ISoftDelete>();
+                // Filters targetted at specific entities take priority over general filters
+                if (entitySoftDelete.IsSet && entitySoftDelete.IsEnabled || !entitySoftDelete.IsSet && softDeleteEnabled)
                 {
                     var softDeleteExpr = 
                         EnsureCollectionWrapped(param =>
@@ -305,10 +333,10 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 //    .Invoke(DataFilter, null);
 
                 // todo: Update this after IDataFilter and IMultiTenant contain appropriate generic interfaces
-                var entityMultiTenantEnabled = GetEntityFilterEnabled(typeof(IMultiTenant<>), targetEntityType.ClrType);
-
-                // Is IMultiTenant enabled for the specific entity OR for the general query
-                if (DataFilter.IsEnabled<IMultiTenant>() && entityMultiTenantEnabled || entityMultiTenantEnabled)
+                var entityMultiTenant = GetEntityFilter(typeof(IMultiTenant<>), targetEntityType.ClrType);
+                var multiTenantEnabled = DataFilter.IsEnabled<IMultiTenant>();
+                // Filters targetted at specific entities take priority over general filters
+                if (entityMultiTenant.IsSet && entityMultiTenant.IsEnabled || !entityMultiTenant.IsSet && multiTenantEnabled)
                 {
                     // todo: a 'Convert' expression might need to wrap the 'Equal' expression?
                     var tenantIdExpr =
@@ -332,8 +360,15 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             }
 
             // Combine all filters to simplify the expression
-            var combinedExpression = expressionCache.Aggregate((left, right) => Expression.AndAlso(left, right));
-            sourceQuery = Expression.Call(whereMethodInfo, sourceQuery, Expression.Lambda(combinedExpression, sourceParam));
+            if (expressionCache.Count > 0)
+            {
+                var combinedExpression = expressionCache.Aggregate((left, right) => Expression.AndAlso(left, right));
+
+                sourceQuery = Expression.Call(
+                    whereMethodInfo,
+                    sourceQuery,
+                    Expression.Quote(Expression.Lambda(combinedExpression, sourceParam)));
+            }
             
             return expressionCache.Count;
         }
@@ -397,22 +432,41 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             }
         }
 
+#nullable enable
+        private Expression? ExtractAbpQueryFilterMetadata(MethodCallExpression methodCallExpression)
+        {
+            // We visit innerQueryable first so that we can get information in the same order operators are applied.
+            var genericMethodDefinition = methodCallExpression.Method.GetGenericMethodDefinition();
+
+            if (genericMethodDefinition == IgnoreAbpQueryFiltersMethodInfo)
+            {
+                QueryCompilationContext.AddTag(IgnoreAbpQueryFiltersTag);
+
+                // Remove 'IgnoreAbpQueryFilters' tag from the queryable
+                // todo: is a fullly recursive 'Visit' call required?
+                return Visit(methodCallExpression.Arguments[0]);
+            }
+
+            return null;
+        }
+#nullable disable
+
         protected static string GetParamName(Type clrType) => char.ToLowerInvariant(clrType.Name[0]).ToString();
 
-        protected bool GetEntityFilterEnabled(Type filterType, Type entityType)
+        protected (bool IsSet, bool IsEnabled) GetEntityFilter(Type filterType, Type entityType)
         {
             var type = filterType.MakeGenericType(entityType);
 
             if (DataFilterCollection != null && DataFilterCollection.TryGetValue(type, out var filter))
             {
-                return (bool)filter.GetType()
+                return (true, (bool)filter.GetType()
                     .GetProperty("IsEnabled", BindingFlags.Public | BindingFlags.Instance)
-                    .GetValue(filter);
+                    .GetValue(filter));
             }
 
-            // To be safe, this assumes the filter is enabled if  we can't access DataFilterCollection or there is no default state set.
-            // Based on DataFilter.EnsureInitialized() method. 
-            return DataFilterOptions?.DefaultStates.GetOrDefault(type)?.IsEnabled ?? true;
+            // Based on DataFilter.EnsureInitialized() method.
+            // Because we are querying a specific entity state, we should return 'false' if there is not default state for this entity.
+            return (false, DataFilterOptions?.DefaultStates.GetOrDefault(type)?.IsEnabled ?? false);
         }
     }
 

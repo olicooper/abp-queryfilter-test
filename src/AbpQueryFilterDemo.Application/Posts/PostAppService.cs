@@ -1,5 +1,4 @@
-﻿using AbpQueryFilterDemo.Domain;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
@@ -31,7 +30,7 @@ namespace AbpQueryFilterDemo.Posts
             await CheckGetListPolicyAsync();
 
             using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : DataFilter.Enable<ISoftDelete>())
-            // using (DataFilter.Disable<ISoftDelete<Blogs.Blog>>())
+            using (input.IgnoreSoftDeleteForBlog ? DataFilter.Disable<ISoftDelete<Blogs.Blog>>() : DataFilter.Enable<ISoftDelete<Blogs.Blog>>())
             {
                 var query = await CreateFilteredQueryAsync(input);
                 
@@ -67,6 +66,10 @@ namespace AbpQueryFilterDemo.Posts
 
                     return (await ReadOnlyRepository.GetQueryableAsync())
                         //.IgnoreQueryFilters()
+
+                        // Bypass all ABP filters for a query (ignores filters like ISoftDelete/IMultiTenant)
+                        // note: the additional 'Where' calls are to test that the 'IgnoreAbpQueryFilters' call is stripped without stripping any other calls
+                        //.Where(x => x.LastModificationTime == null).IgnoreAbpQueryFilters().Where(x => x.LastModificationTime == null)
 
                         // This could be difficult to evaluate
                         //.Include(x => x.Blog).ThenInclude(x => x.Posts)
