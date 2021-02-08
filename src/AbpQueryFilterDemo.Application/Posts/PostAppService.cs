@@ -69,9 +69,9 @@ namespace AbpQueryFilterDemo.Posts
                         //.IgnoreQueryFilters()
 
                         // This could be difficult to evaluate
-                        .Include(x => x.Blog).ThenInclude(x => x.Posts)
+                        //.Include(x => x.Blog).ThenInclude(x => x.Posts)
                         //.Include(x => x.Blog.Posts)
-                        //.Include(x => x.Blog)
+                        .Include(x => x.Blog)
 
                         // Thankfully this fails - so we don't need to account for includes with method calls
                         //.Include(x => x.Blog.Posts.First().Blog)

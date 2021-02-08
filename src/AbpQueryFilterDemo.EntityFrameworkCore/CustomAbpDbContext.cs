@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Volo.Abp;
@@ -240,7 +241,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
          * - Optimise so filters are not applied if the query doesn't 'Include' (eager load) any related entities AND there is no Explicit/Lazy loading (i.e. Where clause on related entity)
          * - Support custom DataFilters?
          * - Test complex scenarios
-         *      - DataFilter and CurrentTenant are always available and correctly scoped
+         *      - Test if the DataFilter and CurrentTenant are always available and correctly scoped (multiple DbContexts, using migrations etc)
          *      - Select statement, anonymous returns, abstract base classes, TPH/TPC inheritence, shadow properties etc.
          */
         protected virtual int ApplyAbpGlobalFilters(ref Expression sourceQuery, IEntityType sourceEntityType, INavigation targetEntity = null)
@@ -252,7 +253,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 return 0;
             }
 
-            var appliedFilterCount = 0;
+            List<Expression> expressionCache = new();
             var whereMethodInfo = QueryableMethods.Where.MakeGenericMethod(sourceEntityType.ClrType);
             var sourceParam = Expression.Parameter(sourceEntityType.ClrType, GetParamName(sourceEntityType.ClrType));
 
@@ -288,9 +289,8 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                             sourceParam,
                             targetEntity);
 
-                    sourceQuery = Expression.Call(whereMethodInfo, sourceQuery, Expression.Lambda(softDeleteExpr, sourceParam));
-
-                    ++appliedFilterCount;
+                    // !x.Blog.IsDeleted
+                    expressionCache.Add(softDeleteExpr);
                 }
             }
 
@@ -326,17 +326,16 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                             sourceParam,
                             targetEntity);
 
-                    // sourceQuery.Where(x => x.Blog.TenantId == "GUID")
-                    sourceQuery = Expression.Call(whereMethodInfo, sourceQuery, Expression.Lambda(tenantIdExpr, sourceParam));
-
-                    ++appliedFilterCount;
+                    // x.Blog.TenantId == "GUID"
+                    expressionCache.Add(tenantIdExpr);
                 }
             }
 
-            // Reduce 'Where' clauses to a single clause
-            //if (sourceQuery)
-
-            return appliedFilterCount;
+            // Combine all filters to simplify the expression
+            var combinedExpression = expressionCache.Aggregate((left, right) => Expression.AndAlso(left, right));
+            sourceQuery = Expression.Call(whereMethodInfo, sourceQuery, Expression.Lambda(combinedExpression, sourceParam));
+            
+            return expressionCache.Count;
         }
 
         // todo: We are enforcing eager loding of collections here which might not be wanted! But if the query has 'Include' for this collection then we are safe to do this.
