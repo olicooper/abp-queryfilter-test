@@ -8,7 +8,21 @@ Soft deletion can be configured on entites by using global query filters e.g. `M
 If the parent `Blog` entity contains a collection of `Posts` (`ICollection<Post> Posts`) and some of those posts are deleted, then the `Blog.Posts` property will only contain the non-deleted posts.
 Similarly, if you want to return *ALL* posts and you have the parent `Blog` as a property of the post (`Post.Blog`), only posts belonging to non-deleted blogs will be returned!
 
-**The goal is simple:** <u>Ignore</u> the global query filters for specific entities by using an IQueryable extension method `IgnoreAbpQueryFilter` which stops the filters being applied on a case-by-case basis.
+**The goal is simple:** <u>Ignore</u> the global query filters for specific entities by using DataFilters (i.e. `DataFilter.Disable<ISoftDelete<Blog>>()`) or by using an IQueryable extension method `IgnoreAbpQueryFilter` which stops the filters being applied on a case-by-case basis.
+
+This should fix various issues which have been raised in the past - see [linked issues](#linked-issues)
+
+## The method
+
+1. Disable the use of global query filters (the ABP `ModelBuilder.OnModelCreating()` query filter generation code is bypassed, so no calls to `Entity.UseQueryFilter()`)
+2. Intercept the query compilation and append the appropriate data filters
+
+This sounds simpler than it actually is so the following issues are present in the solution:
+* EF performs multiple calls to the database when loading collections - Collection filtering doesn't currently work.
+* Lazy/Eager/Implicit loading need to be considered.
+* Different DB providers implement things differently - Only Relational EF provider is currently implemented.
+* Queries are cached so updating queries is difficult when filters change - If filters change at runtime, they don't take effect.
+* Filters shouldn't be applied if the navigation items are not going to be loaded - This isn't fully operational yet.
 
 ### Example
 ```csharp
@@ -34,7 +48,8 @@ PostsRepository
     * Data/AppDataSeedContributor.cs
     * Extensions/AbpQueryableExtensions.cs
 * Domain.Shared
-    * IMultiTenantExtension.cs/ISoftDeleteExtension.cs
+    * IMultiTenantExtension.cs
+    * ISoftDeleteExtension.cs
 * EntityframeworkCore
     * CustomAbpDbContext.cs
     * Repositories/PostRepository.cs
@@ -65,3 +80,6 @@ PostsRepository
 * https://github.com/dotnet/efcore/issues/11691
 * https://github.com/dotnet/efcore/issues/21093#issuecomment-640108508
 * https://github.com/abpframework/abp/issues/6680
+* https://github.com/abpframework/abp/issues/7482
+* https://github.com/abpframework/abp/issues/1181
+* https://github.com/abpframework/abp/issues/5650
