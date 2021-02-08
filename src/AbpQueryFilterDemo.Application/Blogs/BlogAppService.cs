@@ -1,6 +1,8 @@
 ﻿using AbpQueryFilterDemo.Domain;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
@@ -32,6 +34,11 @@ namespace AbpQueryFilterDemo.Blogs
             {
                 var query = await CreateFilteredQueryAsync(input);
 
+                // see: https://docs.microsoft.com/en-us/ef/core/querying/single-split-queries#split-queries-1
+                //var query = (await ReadOnlyRepository.GetQueryableAsync()).Include(x => x.Posts).AsSplitQuery();
+
+                //query = query.Where(x => x.Posts.AsQueryable().Any(x => !x.IsDeleted));
+
                 var totalCount = await AsyncExecuter.CountAsync(query);
 
                 query = ApplySorting(query, input);
@@ -48,8 +55,7 @@ namespace AbpQueryFilterDemo.Blogs
         {
             return (await (input.IncludeDetails
                 ? ReadOnlyRepository.WithDetailsAsync(x => x.Posts)
-                : ReadOnlyRepository.GetQueryableAsync()))
-                    .IgnoreAbpQueryFilter(x => x.Posts);
+                : ReadOnlyRepository.GetQueryableAsync()));
         }
     }
 }

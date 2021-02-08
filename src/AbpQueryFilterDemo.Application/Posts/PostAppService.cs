@@ -1,7 +1,7 @@
-﻿using AbpQueryFilterDemo.Domain;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
@@ -30,8 +30,11 @@ namespace AbpQueryFilterDemo.Posts
             await CheckGetListPolicyAsync();
 
             using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : DataFilter.Enable<ISoftDelete>())
+            using (input.IgnoreSoftDeleteForBlog ? DataFilter.Disable<ISoftDelete<Blogs.Blog>>() : DataFilter.Enable<ISoftDelete<Blogs.Blog>>())
             {
                 var query = await CreateFilteredQueryAsync(input);
+                
+                //query = query.Where(x => !x.Blog.IsDeleted);
 
                 var totalCount = await AsyncExecuter.CountAsync(query);
                 //var totalCount = 4;
@@ -50,8 +53,7 @@ namespace AbpQueryFilterDemo.Posts
         {
             //return (await (input.IncludeDetails 
             //    ? ReadOnlyRepository.WithDetailsAsync(x => x.Blog)
-            //    : ReadOnlyRepository.GetQueryableAsync()))
-            //        .IgnoreAbpQueryFilter(x => x.Blog);
+            //    : ReadOnlyRepository.GetQueryableAsync()));
 
             if (input.UseQuerySyntax)
             {
@@ -63,15 +65,16 @@ namespace AbpQueryFilterDemo.Posts
                 {
 
                     return (await ReadOnlyRepository.GetQueryableAsync())
-                        .IgnoreAbpQueryFilter(x => x.Blog)
-                        //.IgnoreAbpQueryFilter(x => x.Blog.Posts)
-
                         //.IgnoreQueryFilters()
 
+                        // Bypass all ABP filters for a query (ignores filters like ISoftDelete/IMultiTenant)
+                        // note: the additional 'Where' calls are to test that the 'IgnoreAbpQueryFilters' call is stripped without stripping any other calls
+                        //.Where(x => x.LastModificationTime == null).IgnoreAbpQueryFilters().Where(x => x.LastModificationTime == null)
+
                         // This could be difficult to evaluate
-                        .Include(x => x.Blog).ThenInclude(x => x.Posts)
+                        //.Include(x => x.Blog).ThenInclude(x => x.Posts)
                         //.Include(x => x.Blog.Posts)
-                        //.Include(x => x.Blog)
+                        .Include(x => x.Blog)
 
                         // Thankfully this fails - so we don't need to account for includes with method calls
                         //.Include(x => x.Blog.Posts.First().Blog)
@@ -79,9 +82,8 @@ namespace AbpQueryFilterDemo.Posts
                 }
                 else
                 {
-                    return (await ReadOnlyRepository.GetQueryableAsync())
-                        // This should have no effect because nothing was included ('Include()' was not called)
-                        .IgnoreAbpQueryFilter(x => x.Blog);
+                    // This should not filter entities because nothing was included ('Include()' was not called)
+                    return await ReadOnlyRepository.GetQueryableAsync();
                 }
             }
         }

@@ -36,6 +36,7 @@ using Volo.Abp.UI.Navigation.Urls;
 using Volo.Abp.UI;
 using Volo.Abp.UI.Navigation;
 using Volo.Abp.VirtualFileSystem;
+using Volo.Abp.BackgroundJobs;
 
 namespace AbpQueryFilterDemo.Web
 {
@@ -83,6 +84,9 @@ namespace AbpQueryFilterDemo.Web
             ConfigureNavigationServices();
             ConfigureAutoApiControllers();
             ConfigureSwaggerServices(context.Services);
+
+            // Disabled to stop log pollution
+            Configure<AbpBackgroundJobOptions>(options => options.IsJobExecutionEnabled = false);
         }
 
         private void ConfigureUrls(IConfiguration configuration)
