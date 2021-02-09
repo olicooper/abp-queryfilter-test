@@ -34,6 +34,13 @@ Microsoft say this is to ensure referential integrity, but this is only applicab
 
 This solution should fix various issues which have been raised in the past - see [linked issues](#linked-issues).
 
+I am also planning on integrating [these changes](https://github.com/abpframework/abp/compare/dev...olicooper:pr/data-filtering-updates) to ABP's DataFilters to facilitate this project.
+
+## The method
+
+1. Disable the use of global query filters (the ABP `ModelBuilder.OnModelCreating()` query filter generation code is bypassed, so no calls to `Entity.UseQueryFilter()`)
+2. Intercept the query compilation and append the appropriate data filters
+
 ### Usage example
 ```csharp
 using (DataFilter.Enable<ISoftDelete())
@@ -46,11 +53,6 @@ using (DataFilter.Disable<ISoftDelete<Blog>>())
         .ToListAsync();
 }
 ```
-
-## The method
-
-1. Disable the use of global query filters (the ABP `ModelBuilder.OnModelCreating()` query filter generation code is bypassed, so no calls to `Entity.UseQueryFilter()`)
-2. Intercept the query compilation and append the appropriate data filters
 
 ## Current issues
 
@@ -69,7 +71,9 @@ The following known issues (non-exhaustive) are present in the solution:
 
 1. Ensure that MySQL is installed and that your `appsettings.json` is correct
 2. Run the `DbMigrations` project to create the database and seed the blog/post data
-3. Run the `Web` project to see the sample data
+3. Run the `Web` project to see the sample data. You can modify `Pages/index.js` to change which queries are run.
+
+For more info about the ABP project, you can visit [docs.abp.io](https://docs.abp.io).
 
 ## Main project files
 
