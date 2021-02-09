@@ -9,7 +9,12 @@
             paging: false,
             order: [[1, "asc"]],
             searching: false,
-            ajax: abp.libs.datatables.createAjax(abpQueryFilterDemo.blogs.blog.getList, () => ({ includeDetails: true, useIncludeFilter: true })),
+            ajax: abp.libs.datatables.createAjax(abpQueryFilterDemo.blogs.blog.getList, () => ({
+                includeDetails: true,
+                useIncludeFilter: false,
+                ignoreSoftDelete: false,
+                ignoreSoftDeleteForPosts: false
+            })),
             columnDefs: [
                 {
                     title: l('Blog:Name'),

@@ -28,7 +28,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         /// <summary>
         /// Determines if the custom filters should be applied to navigation items or just the root entity for the query.
         /// </summary>
-        public static bool ApplyFiltersToNavigations => UseCustomFiltering && false;
+        public static bool ApplyFiltersToNavigations => UseCustomFiltering && true;
         /// <summary>
         /// Bypass the <see cref="RelationalQueryTranslationPreprocessor.Process(Expression)"/> method by setting this false. 
         /// This manually calls the methods found in <see cref="QueryTranslationPreprocessor.Process(Expression)"/> so you can see it being translated.
@@ -267,10 +267,6 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
     /// </summary>
     public class CustomQueryTranslationPreprocessor : RelationalQueryTranslationPreprocessor
     {
-        protected AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
-
-        private Dictionary<IEntityType, HashSet<LambdaExpression>> _parameterizedQueryFilterPredicateCache = new();
-        
         private readonly RelationalQueryCompilationContext _relationalQueryCompilationContext;
 
         public CustomQueryTranslationPreprocessor(
@@ -279,9 +275,6 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             [NotNull] QueryCompilationContext queryCompilationContext)
             : base(dependencies, relationalDependencies, queryCompilationContext)
         {
-            GlobalFiltersExtension = QueryCompilationContext.ContextOptions
-                .FindExtension<AbpGlobalFiltersOptionsExtension>();
-
             _relationalQueryCompilationContext = (RelationalQueryCompilationContext)queryCompilationContext;
         }
 
@@ -289,13 +282,10 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         // see: https://github.com/dotnet/efcore/blob/46996600cb3f152e3e21ee4d07effdc516dbf4e9/src/EFCore/Query/QueryTranslationPreprocessor.cs#L55-L69
         public override Expression Process(Expression query)
         {
-            if (Consts.UseCustomFiltering && GlobalFiltersExtension != null && GlobalFiltersExtension.DataFilter != null)
+            if (Consts.UseCustomFiltering)
             {
-                query = new AppendAbpFiltersExpressionVisitor(
-                    QueryCompilationContext, 
-                    in GlobalFiltersExtension, 
-                    ref _parameterizedQueryFilterPredicateCache)
-                   .Visit(query);
+                // *+*+*+*+* This is where the magic happens *+*+*+*+*
+                query = new AbpFilterAppendingExpressionVisitor(QueryCompilationContext).Visit(query);
             }
 
             if (Consts.ExposePreprocessorProcessMethods)
@@ -327,7 +317,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         }
     }
 
-    public class AppendAbpFiltersExpressionVisitor : ExpressionVisitor
+    public class AbpFilterAppendingExpressionVisitor : ExpressionVisitor
     {
         internal static readonly string AbpQueryFiltersAppliedTag = "AbpQueryFiltersApplied";
 
@@ -338,32 +328,30 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 .GetTypeInfo()
                 .GetDeclaredMethod(nameof(AbpQueryableExtensions_DemoProj.IgnoreAbpQueryFilters));
 
-        protected IDataFilter DataFilter => GlobalFiltersExtension?.DataFilter;
-        protected AbpDataFilterOptions DataFilterOptions => GlobalFiltersExtension?.DataFilterOptions;
-        protected BasicTenantInfo CurrentTenant => GlobalFiltersExtension?.CurrentTenantAccessor?.Current;
 
         protected readonly QueryCompilationContext QueryCompilationContext;
 
         protected readonly AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
+        protected IDataFilter DataFilter => GlobalFiltersExtension?.DataFilter;
+        protected AbpDataFilterOptions DataFilterOptions => GlobalFiltersExtension?.DataFilterOptions;
+        protected BasicTenantInfo CurrentTenant => GlobalFiltersExtension?.CurrentTenantAccessor?.Current;
 
         private QuerySplittingBehavior? _querySplittingBehavior { get; set; } = null;
-        private Dictionary<IEntityType, HashSet<LambdaExpression>> _parameterizedQueryFilterPredicateCache;
+        private List<MethodCallExpression> _includeExpressionCache = new();
         private readonly HashSet<string> _parameterNames = new();
 
-        public AppendAbpFiltersExpressionVisitor(
-            [NotNull] QueryCompilationContext queryCompilationContext,
-            [NotNull] in AbpGlobalFiltersOptionsExtension globalFiltersExtension,
-            [NotNull] ref Dictionary<IEntityType, HashSet<LambdaExpression>> parameterizedQueryFilterPredicateCache)
+        public AbpFilterAppendingExpressionVisitor(
+            [NotNull] QueryCompilationContext queryCompilationContext)
         {
             QueryCompilationContext = queryCompilationContext;
-            GlobalFiltersExtension = globalFiltersExtension;
+
+            GlobalFiltersExtension = QueryCompilationContext.ContextOptions
+                .FindExtension<AbpGlobalFiltersOptionsExtension>();
 
             if (queryCompilationContext is RelationalQueryCompilationContext)
             {
                 _querySplittingBehavior = RelationalOptionsExtension.Extract(queryCompilationContext.ContextOptions)?.QuerySplittingBehavior;
             }
-
-            _parameterizedQueryFilterPredicateCache = parameterizedQueryFilterPredicateCache;
         }
 
         // todo: cache 'Include'/'ThenInclude' statements not complete!
@@ -390,23 +378,10 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             if (methodCallExpression.Method.DeclaringType == typeof(Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions)
                 && methodCallExpression.Method.IsGenericMethod
                 && (methodCallExpression.Method.Name == nameof(EntityFrameworkQueryableExtensions.Include)
-                    /*|| methodCallExpression.Method.Name == nameof(EntityFrameworkQueryableExtensions.ThenInclude)*/))
+                    //|| methodCallExpression.Method.Name == nameof(EntityFrameworkQueryableExtensions.ThenInclude)
+                    ))
             {
-                // todo: recursion is not fun when ExpressionVisitor is already recursive, this needs improving!
-                Expression rootExpression = TryGetQueryRootExpression(methodCallExpression);
-                if (rootExpression is QueryRootExpression queryRoot)
-                {
-                    var lambda = methodCallExpression.Arguments[1].UnwrapLambdaFromQuote();
-
-                    if (_parameterizedQueryFilterPredicateCache.ContainsKey(queryRoot.EntityType))
-                    {
-                        _parameterizedQueryFilterPredicateCache[queryRoot.EntityType].Add(lambda);
-                    }
-                    else
-                    {
-                        _parameterizedQueryFilterPredicateCache.Add(queryRoot.EntityType, new() { lambda });
-                    }
-                }
+                _includeExpressionCache.Add(methodCallExpression);
             }
 
             return base.VisitMethodCall(methodCallExpression);
@@ -422,7 +397,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 return base.VisitExtension(extensionExpression);
             }
 
-            // Only append the additional 'Where' clauses to the query if we are at the root expression
+            // Only append the additional 'Where'/'Include' clauses to the query if we are at the root expression
             // otherwise we might insert them in an invalid position which will cause exceptions
             // This modified query will then be passed to EF Core's query processor for further processing.
             if (extensionExpression is QueryRootExpression queryRootExpression)
@@ -431,21 +406,19 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 var processedCount = 0;
 
                 // Apply filters to root entity
-                processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType);
+                processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression);
 
                 // Apply filters to related entities only if 'Include(...)' was used on the query
                 if (Consts.ApplyFiltersToNavigations && !QueryCompilationContext.IgnoreAutoIncludes 
                     // todo: this is probably the wrong thing to do - review it!
                     //&& _querySplittingBehavior != QuerySplittingBehavior.SplitQuery
-                    && _parameterizedQueryFilterPredicateCache.ContainsKey(queryRootExpression.EntityType))
+                    )
                 {
                     foreach (var childEntity in queryRootExpression.EntityType.GetNavigations())
                     {
                         if (childEntity == null) continue;
 
-                        // handle filter application based on _parameterizedQueryFilterPredicateCache
-
-                        processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType, childEntity);
+                        processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression, childEntity);
                     }
                 }
 
@@ -463,25 +436,26 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         // see other: https://github.com/dotnet/efcore/blob/f54b9dcd189c91fc4b01b79c9387d23095819a8f/src/EFCore/Query/Internal/NavigationExpandingExpressionVisitor.cs#L844
         // see other: https://github.com/dotnet/efcore/blob/da00fb69d615fa22a83dfee2077ad31b7bd15823/src/EFCore.Relational/Query/QuerySqlGenerator.cs#L979-L1002
         /* TODO:
-         * - Optimise so filters are not applied if there is a 'Where' caluse that already satisfies the filter (or if a filter will conflict with a where statement?? i.e. IsDeleted==true && IsDeleted==false)
+         * - Optimise so filters are not applied if there is a 'Where'/'Include' clause that already satisfies the filter (or if a filter will conflict with a where statement?? i.e. IsDeleted==true && IsDeleted==false)
          * - Optimise so filters are not applied if the query doesn't 'Include' (eager load) any related entities AND there is no Explicit/Lazy loading (i.e. Where clause on related entity)
          * - Support custom DataFilters?
-         * - Handle when 'RelationalQueryableExtensions.AsSingleQuery()' and 'RelationalQueryableExtensions.AsSplitQuery()' are used
+         * - Possibly handle when 'RelationalQueryableExtensions.AsSingleQuery()' and 'RelationalQueryableExtensions.AsSplitQuery()' are used
          * - Test complex scenarios
          *      - Test if the DataFilter and CurrentTenant are always available and correctly scoped (multiple DbContexts, using migrations etc)
          *      - Select statement, anonymous returns, abstract base classes, TPH/TPC inheritence, shadow properties etc.
          */
-        protected virtual int ApplyAbpGlobalFilters(ref Expression sourceQuery, IEntityType sourceEntityType, INavigation targetEntity = null)
+        protected virtual int ApplyAbpGlobalFilters(ref Expression sourceQuery, in QueryRootExpression queryRootExpression, INavigation targetEntity = null)
         {
             // Don't want to apply filters to an abstract class
             // todo: check if this is appropriate
-            if (sourceEntityType.BaseType != null && targetEntity == null)
+            if (queryRootExpression.EntityType.BaseType != null && targetEntity == null)
             {
                 return 0;
             }
 
             List<Expression> expressionCache = new();
-            var whereMethodInfo = QueryableMethods.Where.MakeGenericMethod(sourceEntityType.ClrType);
+
+            var sourceEntityType = queryRootExpression.EntityType;
             var sourceParam = Expression.Parameter(sourceEntityType.ClrType, GetParamName(sourceEntityType, _parameterNames));
 
             IEntityType targetEntityType = targetEntity == null ? sourceEntityType : targetEntity.TargetEntityType;
@@ -507,12 +481,20 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                                     Expression.Property(param, "IsDeleted").Member
                                 )
                             ),
+                            sourceQuery,
                             sourceParam,
                             _parameterNames,
+                            _includeExpressionCache,
                             targetEntity);
 
-                    // !x.Blog.IsDeleted
-                    expressionCache.Add(softDeleteExpr);
+                    if (softDeleteExpr is MethodCallExpression)
+                    {
+                        sourceQuery = softDeleteExpr;
+                    }
+                    else
+                    {
+                        expressionCache.Add(softDeleteExpr);
+                    }
                 }
             }
 
@@ -525,10 +507,10 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 // Filters targetted at specific entities take priority over general filters
                 if (entityMultiTenant.IsSet && entityMultiTenant.IsEnabled || !entityMultiTenant.IsSet && (!multiTenant.IsSet || multiTenant.IsEnabled))
                 {
-                    // todo: a 'Convert' expression might need to wrap the 'Equal' expression?
                     var tenantIdExpr =
                         EnsureCollectionWrapped(param =>
                             // x.Blog.TenantId == "GUID"
+                            // todo: a 'Convert' expression might need to wrap the 'Equal' expression?
                             Expression.Equal(
                                 // x.Blog.TenantId
                                 Expression.MakeMemberAccess(
@@ -538,22 +520,33 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                                 ),
                                 Expression.Constant(CurrentTenant.TenantId)
                             ),
+                            sourceQuery,
                             sourceParam,
                             _parameterNames,
+                            _includeExpressionCache,
                             targetEntity);
 
-                    // x.Blog.TenantId == "GUID"
-                    expressionCache.Add(tenantIdExpr);
+                    if (tenantIdExpr is MethodCallExpression mce)
+                    {
+                        //if (mce.Method == QueryableExtensions.IncludeMethodInfo)
+                        //{
+                            sourceQuery = tenantIdExpr;
+                        //}
+                    }
+                    else
+                    {
+                        expressionCache.Add(tenantIdExpr);
+                    }
                 }
             }
 
-            // Combine all filters to simplify the expression
+            // Combine all simple (non-MethodCall) filters to simplify the expression
             if (expressionCache.Count > 0)
             {
                 var combinedExpression = expressionCache.Aggregate((left, right) => Expression.AndAlso(left, right));
 
                 sourceQuery = Expression.Call(
-                    whereMethodInfo,
+                    QueryableMethods.Where.MakeGenericMethod(sourceEntityType.ClrType),
                     sourceQuery,
                     Expression.Quote(Expression.Lambda(combinedExpression, sourceParam)));
             }
@@ -565,12 +558,15 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         // todo: This doesn't actually filter collections because we need to call 'Select' instead of 'Where' e.g. 'blogQuery.Select(e => e.Posts.Where(p => !p.IsDeleted)))
         protected static Expression EnsureCollectionWrapped(
             Func<Expression, Expression> expressionTemplate,
+            in Expression sourceQuery,
             ParameterExpression sourceParam,
             HashSet<string> parameterNames,
+            in List<MethodCallExpression> includeExpressionCache,
             INavigation targetEntity = null)
         {
             if (targetEntity != null && targetEntity.IsCollection)
             {
+                // blog.Posts
                 Expression targetExpr = Expression.MakeMemberAccess(sourceParam, targetEntity.PropertyInfo);
 
                 var collectionParam = Expression.Parameter(
@@ -589,29 +585,85 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                         arguments: new[] { targetExpr }
                     );
 
-                // 3. Wrap the expression template in an Any() call
-                return
-                    // e.Blogs.AsQueryable().Any(c0 => !c0.IsDeleted)
+
+                // 3. Wrap the expression template in an Where() call
+                targetExpr =
+                    // blog.Posts.AsQueryable().Where(post => !post.IsDeleted)
                     Expression.Call(
                         instance: null,
-                        // note: Use this version when the source is IEnumerable
-                        //typeof(Enumerable).GetMethods().Single(mi => mi.Name == "Any" && mi.GetParameters().Count() == 2)
-                        method: QueryableMethods.AnyWithPredicate.MakeGenericMethod(targetEntity.TargetEntityType.ClrType),
+                        method: QueryableMethods.Where.MakeGenericMethod(targetEntity.TargetEntityType.ClrType),
                         arguments: new[]
                         { 
-                            // e.Blogs.AsQueryable()
+                            // blog.Posts.AsQueryable()
                             targetExpr,
-                            // c0 => !c0.IsDeleted
-                            Expression.Lambda(
-                                // !c0.IsDeleted
-                                innerExpression,
-                                // c0
-                                collectionParam
+                            // post => !post.IsDeleted
+                            Expression.Quote(
+                                Expression.Lambda(
+                                    // !post.IsDeleted
+                                    innerExpression,
+                                    // post
+                                    collectionParam
+                                )
                             )
                         }
                     );
+
+                // 4. Wrap the Where() call in a Include() call - creating a filtered include statement
+
+                MethodInfo includeMethodInfo = QueryableExtensions.IncludeMethodInfo
+                            .MakeGenericMethod(sourceParam.Type, ((MethodCallExpression)targetExpr).Method.ReturnType);
+
+                //var found = includeExpressionCache.TryGetValue(includeMethodInfo, out var lambdaExpression);
+                MethodCallExpression methodCallExpression = null;
+
+                //foreach (var expression in includeExpressionCache)
+                //{
+                //    //expression.ReturnType == targetEntity.TargetEntityType.ClrType
+
+                //    var lambda = expression.Arguments[1].UnwrapLambdaFromQuote();
+
+                //    if (lambda.Body is ConstantExpression includeConstant)
+                //    {
+                //        if (includeConstant.Value is string navigationChain)
+                //        {
+                //            var navigationPaths = navigationChain.Split(new[] { "." }, StringSplitOptions.None);
+                            
+                //            if (navigationPaths.Length > 0 && targetEntity.Name == navigationPaths[0])
+                //            {
+                                
+                //            }
+                //        }
+                //    }
+                //}
+
+                var methodCallLambda =
+                    Expression.Quote(
+                        Expression.Lambda(
+                            // blog.Posts.AsQueryable().Where(post => !post.IsDeleted)
+                            targetExpr,
+                            // blog
+                            sourceParam
+                        )
+                    );
+
+                // .Include(blog => blog.Posts.AsQueryable().Where(post => !post.IsDeleted))
+                return methodCallExpression != null 
+                    ? methodCallExpression.Update(methodCallExpression.Object, new[] { methodCallLambda })
+                    : Expression.Call(
+                        instance: null,
+                        method: includeMethodInfo,
+                        arguments: new[]
+                        {
+                            // blog
+                            (Expression)sourceQuery,
+                            // blog => blog.Posts.AsQueryable().Where(post => !post.IsDeleted)
+                            methodCallLambda
+                        }
+                    );
+
             }
             // For non-collection navigations, just return the original expression
+            // todo: use filtered includes for non-collection navigations?
             else
             {
                 return expressionTemplate.Invoke(targetEntity == null 
@@ -680,12 +732,28 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         }
     }
 
-    public static class ExpressionExtensions
+    internal static class ExpressionExtensions
     {
         // https://github.com/dotnet/efcore/blob/da00fb69d615fa22a83dfee2077ad31b7bd15823/src/Shared/ExpressionExtensions.cs#L20
         public static LambdaExpression UnwrapLambdaFromQuote(this Expression expression)
             => (LambdaExpression)(expression is UnaryExpression unary && expression.NodeType == ExpressionType.Quote
                 ? unary.Operand
                 : expression);
+    }
+
+    internal static class QueryableExtensions
+    {
+        // see: https://github.com/dotnet/efcore/blob/b8483772f298f5ada8b2b5253a9904c93c34919f/src/EFCore/Extensions/EntityFrameworkQueryableExtensions.cs#L2026-L2033
+        /// <summary>
+        /// The <see cref="System.Reflection.MethodInfo"/> for <see cref="EntityFrameworkQueryableExtensions.Include{TEntity, TProperty}(IQueryable{TEntity}, Expression{Func{TEntity, TProperty}})"/>
+        /// </summary>
+        internal static readonly MethodInfo IncludeMethodInfo
+            = typeof(EntityFrameworkQueryableExtensions)
+                .GetTypeInfo().GetDeclaredMethods(nameof(EntityFrameworkQueryableExtensions.Include))
+                .Single(
+                    mi =>
+                        mi.GetGenericArguments().Count() == 2
+                        && mi.GetParameters().Any(
+                            pi => pi.Name == "navigationPropertyPath" && pi.ParameterType != typeof(string)));
     }
 }

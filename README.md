@@ -60,11 +60,11 @@ Replacing query filters sounds simpler than it actually is and there are many hu
 
 The following known issues (non-exhaustive) are present in the solution:
 
-* :x: Collection filtering doesn't currently work because EF performs multiple calls to the database when loading collections when `QuerySplittingBehavior.SplitQuery` is used.
+* :x: Collection filtering doesn't work for nested includes. It will also return unexpected results on filtered collections when using the same `DbContext` due to [navigation fixup](https://docs.microsoft.com/en-us/ef/core/querying/related-data/eager#filtered-include) when tracking entities.
 * :x: Lazy/Eager/Implicit loading isn't considered nor is `IgnoreAutoIncludes`, entity tracking and [skip navigations](https://docs.microsoft.com/en-us/ef/core/what-is-new/ef-core-5.0/plan#many-to-many-navigation-properties-aka-skip-navigations) etc.
+* :x: Filters shouldn't be applied if the navigation items are not going to be loaded. This relates the the point above.
 * :x: Different DB providers implement things differently - Only Relational EF provider is currently implemented.
-* :heavy_check_mark: Queries are cached so updating queries is difficult when filters change - ~~If filters change at runtime, they don't take effect.~~
-* :x: Filters shouldn't be applied if the navigation items are not going to be loaded.
+* :heavy_check_mark: ~~Queries are cached so if filters change at runtime, they don't take effect.~~
 
 
 ## Running the project
@@ -101,9 +101,11 @@ For more info about the ABP project, you can visit [docs.abp.io](https://docs.ab
 * https://docs.microsoft.com/en-us/ef/core/dbcontext-configuration/
 * https://docs.microsoft.com/en-us/ef/core/modeling/
 * https://docs.microsoft.com/en-us/ef/core/providers/writing-a-provider/
-* https://docs.microsoft.com/en-us/dotnet/api/system.linq.expressions.expressiontype?view=net-5.0
-* https://docs.microsoft.com/en-us/dotnet/csharp/expression-trees-interpreting/
 * https://docs.microsoft.com/en-us/archive/blogs/mattwar/linq-building-an-iqueryable-provider-series/
+* Getting started guide to Expression trees: https://tyrrrz.me/blog/expression-trees
+* All available `ExpressionTypes`: https://docs.microsoft.com/en-us/dotnet/api/system.linq.expressions.expressiontype?view=net-5.0
+* Explains what `Expression.Quote` is: https://stackoverflow.com/a/19148022/2634818
+* Another Expression tree guide: https://docs.microsoft.com/en-us/dotnet/csharp/expression-trees-interpreting/
 
 ### Source code
 * Entry point: [QueryCompilationContext.cs#L179-L210](https://github.com/dotnet/efcore/blob/0b3165096d6b55443fc06ae48404c2b037dd73e7/src/EFCore/Query/QueryCompilationContext.cs#L179-L210)
