@@ -39,7 +39,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                     ?? new AbpGlobalFiltersOptionsExtension(
                         this.DataFilter, 
                         LazyServiceProvider.LazyGetRequiredService<IOptions<AbpDataFilterOptions>>(), 
-                        this.CurrentTenant);
+                        LazyServiceProvider.LazyGetRequiredService<ICurrentTenantAccessor>());
 
                 ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
             }
@@ -134,10 +134,25 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             public bool Equals(CompiledQueryWithAbpFilterCacheKey other)
                 => _relationalCompiledQueryCacheKey.Equals(other._relationalCompiledQueryCacheKey)
                     && _ignoreAbpDataFilters == other._ignoreAbpDataFilters
-                    && _appliedDataFilters == other._appliedDataFilters;
+                    && _appliedDataFilters.SequenceEqual(other._appliedDataFilters);
 
             public override int GetHashCode()
-                => HashCode.Combine(_ignoreAbpDataFilters, _appliedDataFilters);
+            {
+                var hash = new HashCode();
+                hash.Add(_relationalCompiledQueryCacheKey);
+                hash.Add(_ignoreAbpDataFilters);
+
+                // todo: this must be slow, can we improve it?
+                // note: _appliedDataFilters HashSet will be different every time the query is run (so we can't compare _appliedDataFilters as a whole), 
+                //       but the objects in the HashSet are always the same.
+                //hash.Add(_appliedDataFilters);
+                foreach (var filter in _appliedDataFilters)
+                {
+                    hash.Add(filter);
+                }
+
+                return hash.ToHashCode();
+            }
         }
 
         protected struct FilterValue
@@ -153,11 +168,11 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
             public override bool Equals(object obj)
                 => obj is FilterValue value &&
-                       IsEnabled == value.IsEnabled &&
-                       EqualityComparer<Type>.Default.Equals(Type, value.Type);
+                    IsEnabled == value.IsEnabled &&
+                    Type.Equals(value.Type);
 
             public override int GetHashCode()
-                => HashCode.Combine(IsEnabled, Type);
+                => HashCode.Combine(Type, IsEnabled);
         }
     }
 
@@ -169,7 +184,9 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
         public IDataFilter DataFilter { get; } = null;
         public AbpDataFilterOptions DataFilterOptions { get; } = new AbpDataFilterOptions();
-        public ICurrentTenant CurrentTenant { get; } = null;
+        
+        // todo: is this the best way to get the tenant? What if multitenancy is not available?
+        public ICurrentTenantAccessor CurrentTenantAccessor { get; } = null;
 
         // todo: Remove this after IDataFilter is updated to expose the raw values
         // todo: This will not work on medium-trust environments! https://stackoverflow.com/a/96020/2634818
@@ -181,11 +198,11 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             : _cachedDataFilterCollection);
         private IReadOnlyDictionary<Type, object> _cachedDataFilterCollection;
 
-        public AbpGlobalFiltersOptionsExtension(IDataFilter dataFilter, IOptions<AbpDataFilterOptions> filterOptions, ICurrentTenant currentTenant)
+        public AbpGlobalFiltersOptionsExtension(IDataFilter dataFilter, IOptions<AbpDataFilterOptions> filterOptions, ICurrentTenantAccessor currentTenantAccessor)
         {
             DataFilter = dataFilter;
             DataFilterOptions = filterOptions.Value;
-            CurrentTenant = currentTenant;
+            CurrentTenantAccessor = currentTenantAccessor;
         }
 
         public virtual void ApplyServices(IServiceCollection services) { }
@@ -204,7 +221,6 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             }
         }
     }
-
 
     // Based on Microsoft.EntityFrameworkCore.Query.Internal.QueryTranslationPreprocessorFactory
     // see: https://github.com/dotnet/efcore/blob/46996600cb3f152e3e21ee4d07effdc516dbf4e9/src/EFCore/Query/Internal/QueryTranslationPreprocessorFactory.cs
@@ -285,11 +301,13 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
         protected IDataFilter DataFilter => GlobalFiltersExtension?.DataFilter;
         protected AbpDataFilterOptions DataFilterOptions => GlobalFiltersExtension?.DataFilterOptions;
-        protected ICurrentTenant CurrentTenant => GlobalFiltersExtension?.CurrentTenant;
+        protected BasicTenantInfo CurrentTenant => GlobalFiltersExtension?.CurrentTenantAccessor?.Current;
 
         protected readonly QueryCompilationContext QueryCompilationContext;
+
         protected readonly AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
 
+        private QuerySplittingBehavior? _querySplittingBehavior { get; set; } = null;
         private Dictionary<IEntityType, HashSet<LambdaExpression>> _parameterizedQueryFilterPredicateCache;
         private readonly HashSet<string> _parameterNames = new();
 
@@ -300,6 +318,11 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         {
             QueryCompilationContext = queryCompilationContext;
             GlobalFiltersExtension = globalFiltersExtension;
+
+            if (queryCompilationContext is RelationalQueryCompilationContext)
+            {
+                _querySplittingBehavior = RelationalOptionsExtension.Extract(queryCompilationContext.ContextOptions)?.QuerySplittingBehavior;
+            }
 
             _parameterizedQueryFilterPredicateCache = parameterizedQueryFilterPredicateCache;
         }
@@ -372,7 +395,10 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType);
 
                 // Apply filters to related entities only if 'Include(...)' was used on the query
-                if (!QueryCompilationContext.IgnoreAutoIncludes && _parameterizedQueryFilterPredicateCache.ContainsKey(queryRootExpression.EntityType))
+                if (!QueryCompilationContext.IgnoreAutoIncludes 
+                    // todo: this is probably the wrong thing to do - review it!
+                    //&& _querySplittingBehavior != QuerySplittingBehavior.SplitQuery
+                    && _parameterizedQueryFilterPredicateCache.ContainsKey(queryRootExpression.EntityType))
                 {
                     foreach (var childEntity in queryRootExpression.EntityType.GetNavigations())
                     {
@@ -426,9 +452,9 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             {
                 // todo: Update this after IDataFilter and ISoftDelete contain appropriate generic interfaces
                 var entitySoftDelete = GetEntityFilter(typeof(ISoftDelete<>), targetEntityType.ClrType);
-                var softDeleteEnabled = DataFilter.IsEnabled<ISoftDelete>();
+                var softDelete = GetEntityFilter(typeof(ISoftDelete));
                 // Filters targetted at specific entities take priority over general filters
-                if (entitySoftDelete.IsSet && entitySoftDelete.IsEnabled || !entitySoftDelete.IsSet && softDeleteEnabled)
+                if (entitySoftDelete.IsSet && entitySoftDelete.IsEnabled || !entitySoftDelete.IsSet && (!softDelete.IsSet || softDelete.IsEnabled))
                 {
                     var softDeleteExpr = 
                         EnsureCollectionWrapped(param =>
@@ -452,13 +478,13 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             }
 
             // Apply IMultiTenant filter
-            if (typeof(IMultiTenant).IsAssignableFrom(targetEntityType.ClrType))
+            if (CurrentTenant != null && typeof(IMultiTenant).IsAssignableFrom(targetEntityType.ClrType))
             {
                 // todo: Update this after IDataFilter and IMultiTenant contain appropriate generic interfaces
                 var entityMultiTenant = GetEntityFilter(typeof(IMultiTenant<>), targetEntityType.ClrType);
-                var multiTenantEnabled = DataFilter.IsEnabled<IMultiTenant>();
+                var multiTenant = GetEntityFilter(typeof(IMultiTenant));
                 // Filters targetted at specific entities take priority over general filters
-                if (entityMultiTenant.IsSet && entityMultiTenant.IsEnabled || !entityMultiTenant.IsSet && multiTenantEnabled)
+                if (entityMultiTenant.IsSet && entityMultiTenant.IsEnabled || !entityMultiTenant.IsSet && (!multiTenant.IsSet || multiTenant.IsEnabled))
                 {
                     // todo: a 'Convert' expression might need to wrap the 'Equal' expression?
                     var tenantIdExpr =
@@ -471,7 +497,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                                     param,
                                     Expression.Property(param, "TenantId").Member //tenantIdMember
                                 ),
-                                Expression.Constant(CurrentTenant.Id)
+                                Expression.Constant(CurrentTenant.TenantId)
                             ),
                             sourceParam,
                             _parameterNames,
@@ -598,9 +624,9 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             return uniqueName;
         }
 
-        protected (bool IsSet, bool IsEnabled) GetEntityFilter(Type filterType, Type entityType)
+        protected (bool IsSet, bool IsEnabled) GetEntityFilter(Type filterType, Type? entityType = null)
         {
-            var type = filterType.MakeGenericType(entityType);
+            var type = entityType == null ? filterType : filterType.MakeGenericType(entityType);
 
             if (GlobalFiltersExtension.FilterCollection != null && GlobalFiltersExtension.FilterCollection.TryGetValue(type, out var filter))
             {
@@ -610,8 +636,8 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             }
 
             // Based on DataFilter.EnsureInitialized() method.
-            // Because we are querying a specific entity state, we should return 'false' if there is not default state for this entity.
-            return (false, DataFilterOptions?.DefaultStates.GetOrDefault(type)?.IsEnabled ?? false);
+            // Return 'false' if there is not default state for specific entities, but return true for generic filters.
+            return (false, DataFilterOptions?.DefaultStates.GetOrDefault(type)?.IsEnabled ?? entityType != null);
         }
     }
 
