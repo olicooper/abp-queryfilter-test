@@ -18,9 +18,26 @@ using Volo.Abp.MultiTenancy;
 // Namespace should be 'Volo.Abp.EntityFrameworkCore.MySQL' according to: https://docs.microsoft.com/en-us/ef/core/providers/writing-a-provider#suggested-naming-of-third-party-providers
 namespace AbpQueryFilterDemo.EntityFrameworkCore
 {
+    public static class Consts
+    {
+        /// <summary>
+        /// If <see langword="false"/>, custom filter logic will be bypassed and the default query filters will be configuired by ABP.
+        /// You'll still be able to inspect the query in <see cref="CustomQueryTranslationPreprocessor.Process(Expression)"/>.
+        /// </summary>
+        public static bool UseCustomFiltering => true;
+        /// <summary>
+        /// Determines if the custom filters should be applied to navigation items or just the root entity for the query.
+        /// </summary>
+        public static bool ApplyFiltersToNavigations => UseCustomFiltering && false;
+        /// <summary>
+        /// Bypass the <see cref="RelationalQueryTranslationPreprocessor.Process(Expression)"/> method by setting this false. 
+        /// This manually calls the methods found in <see cref="QueryTranslationPreprocessor.Process(Expression)"/> so you can see it being translated.
+        /// </summary>
+        public static bool ExposePreprocessorProcessMethods => false;
+    }
+
     public abstract class CustomAbpDbContext<TDbContext> : AbpDbContext<TDbContext> where TDbContext : DbContext
     {
-        private bool USECUSTOMFILTERING = true;
         protected CustomAbpDbContext(DbContextOptions<TDbContext> options) : base(options) { }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -28,12 +45,13 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             base.OnConfiguring(optionsBuilder);
 
             optionsBuilder.ReplaceService<IQueryTranslationPreprocessorFactory, CustomQueryTranslationPreprocessorFactory>();
-            optionsBuilder.ReplaceService<ICompiledQueryCacheKeyGenerator, CompiledQueryWithAbpFilterCacheKeyGenerator>();
 
             // todo: LazyServiceProvider is null when using powershell 'add-migration' etc. this needs investigating!
-            if (USECUSTOMFILTERING && LazyServiceProvider != null)
+            if (Consts.UseCustomFiltering && LazyServiceProvider != null)
             {
-                // Custom Extension to acces DataFilter and CurrentTenant 
+                optionsBuilder.ReplaceService<ICompiledQueryCacheKeyGenerator, CompiledQueryWithAbpFilterCacheKeyGenerator>();
+
+                // Custom Extension to access DataFilter and CurrentTenant 
                 // todo: does this work okay when the when the IServiceProvider is changed within the query context?
                 var extension = optionsBuilder.Options.FindExtension<AbpGlobalFiltersOptionsExtension>()
                     ?? new AbpGlobalFiltersOptionsExtension(
@@ -49,7 +67,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         protected override void ConfigureGlobalFilters<TEntity>(ModelBuilder modelBuilder, IMutableEntityType mutableEntityType)
             where TEntity : class
         {
-            if (USECUSTOMFILTERING) return;
+            if (Consts.UseCustomFiltering) return;
 
             base.ConfigureGlobalFilters<TEntity>(modelBuilder, mutableEntityType);
         }
@@ -58,7 +76,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         protected override Expression<Func<TEntity, bool>> CreateFilterExpression<TEntity>()
            where TEntity : class
         {
-            if (USECUSTOMFILTERING) return null; // DISABLE
+            if (Consts.UseCustomFiltering) return null; // DISABLE
             
             return base.CreateFilterExpression<TEntity>();
         }
@@ -85,9 +103,9 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
         protected object CheckCachedAbpFilters(Expression query, bool async)
         {
-            var currentFilters = GlobalFiltersExtension.FilterCollection.Values
+            var currentFilters = GlobalFiltersExtension?.FilterCollection.Values
                 .Select(x => GetFilterValue(x))
-                .ToHashSet();
+                .ToHashSet() ?? new HashSet<FilterValue>();
 
             return new CompiledQueryWithAbpFilterCacheKey(
                 base.GenerateCacheKeyCore(query, async),
@@ -252,6 +270,8 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         protected AbpGlobalFiltersOptionsExtension GlobalFiltersExtension;
 
         private Dictionary<IEntityType, HashSet<LambdaExpression>> _parameterizedQueryFilterPredicateCache = new();
+        
+        private readonly RelationalQueryCompilationContext _relationalQueryCompilationContext;
 
         public CustomQueryTranslationPreprocessor(
             [NotNull] QueryTranslationPreprocessorDependencies dependencies,
@@ -261,13 +281,15 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         {
             GlobalFiltersExtension = QueryCompilationContext.ContextOptions
                 .FindExtension<AbpGlobalFiltersOptionsExtension>();
+
+            _relationalQueryCompilationContext = (RelationalQueryCompilationContext)queryCompilationContext;
         }
 
         // Called once per query
         // see: https://github.com/dotnet/efcore/blob/46996600cb3f152e3e21ee4d07effdc516dbf4e9/src/EFCore/Query/QueryTranslationPreprocessor.cs#L55-L69
         public override Expression Process(Expression query)
         {
-            if (GlobalFiltersExtension != null && GlobalFiltersExtension.DataFilter != null)
+            if (Consts.UseCustomFiltering && GlobalFiltersExtension != null && GlobalFiltersExtension.DataFilter != null)
             {
                 query = new AppendAbpFiltersExpressionVisitor(
                     QueryCompilationContext, 
@@ -276,14 +298,31 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                    .Visit(query);
             }
 
-            var q = base.Process(query);
-            return q;
-        }
+            if (Consts.ExposePreprocessorProcessMethods)
+            {
+#pragma warning disable EF1001 // Internal EF Core API usage.
 
-        public override Expression NormalizeQueryableMethod(Expression expression)
-        {
-            var query = base.NormalizeQueryableMethod(expression);
-            
+                // from QueryTranslationPreprocessor
+                query = new Microsoft.EntityFrameworkCore.Query.Internal.InvocationExpressionRemovingExpressionVisitor().Visit(query);
+                query = NormalizeQueryableMethod(query);
+                query = new Microsoft.EntityFrameworkCore.Query.Internal.NullCheckRemovingExpressionVisitor().Visit(query);
+                query = new Microsoft.EntityFrameworkCore.Query.Internal.SubqueryMemberPushdownExpressionVisitor(QueryCompilationContext.Model).Visit(query);
+                query = new Microsoft.EntityFrameworkCore.Query.Internal.NavigationExpandingExpressionVisitor(this, QueryCompilationContext, Dependencies.EvaluatableExpressionFilter).Expand(query);
+                query = new Microsoft.EntityFrameworkCore.Query.Internal.QueryOptimizingExpressionVisitor().Visit(query);
+                query = new Microsoft.EntityFrameworkCore.Query.Internal.NullCheckRemovingExpressionVisitor().Visit(query);
+
+                // from RelationalQueryTranslationPreprocessor
+                query = _relationalQueryCompilationContext.QuerySplittingBehavior == QuerySplittingBehavior.SplitQuery
+                    ? new Microsoft.EntityFrameworkCore.Query.Internal.SplitIncludeRewritingExpressionVisitor().Visit(query)
+                    : query;
+
+#pragma warning restore EF1001 // Internal EF Core API usage.
+            }
+            else
+            {
+                query = base.Process(query);
+            }
+
             return query;
         }
     }
@@ -395,7 +434,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression.EntityType);
 
                 // Apply filters to related entities only if 'Include(...)' was used on the query
-                if (!QueryCompilationContext.IgnoreAutoIncludes 
+                if (Consts.ApplyFiltersToNavigations && !QueryCompilationContext.IgnoreAutoIncludes 
                     // todo: this is probably the wrong thing to do - review it!
                     //&& _querySplittingBehavior != QuerySplittingBehavior.SplitQuery
                     && _parameterizedQueryFilterPredicateCache.ContainsKey(queryRootExpression.EntityType))
