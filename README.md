@@ -32,7 +32,7 @@ Microsoft say this is to ensure referential integrity, but this is only applicab
 
 **The goal is simple:** <u>Ignore</u> the global query filters for specific entities by using ABP's `DataFilters` i.e. `DataFilter.Disable<ISoftDelete<Blog>>()` unless the IQueryable extension method `IQueryable.IgnoreAbpQueryFilters()` has been used, which stops the filters being applied on a per-query basis.
 
-This solution should fix various issues which have been raised in the past - see [linked issues](#linked-issues).
+This solution should fix various issues which have been raised in the past - see [linked issues](#linked-issues). It could even be extended to address [current query filter limitations](https://docs.microsoft.com/en-us/ef/core/querying/filters#limitations), create dynamic filters and allow ABP to leverage [EF6 compiled models](https://docs.microsoft.com/en-us/ef/core/what-is-new/ef-core-6.0/plan#compiled-models).
 
 I am also planning on integrating [these changes](https://github.com/abpframework/abp/compare/dev...olicooper:pr/data-filtering-updates) to ABP's DataFilters to facilitate this project.
 
@@ -61,7 +61,7 @@ Replacing query filters sounds simpler than it actually is and there are many hu
 The following known issues (non-exhaustive) are present in the solution:
 
 * :x: Collection filtering doesn't currently work because EF performs multiple calls to the database when loading collections when `QuerySplittingBehavior.SplitQuery` is used.
-* :x: Lazy/Eager/Implicit loading isn't considered nor is `IgnoreAutoIncludes` and entity tracking etc.
+* :x: Lazy/Eager/Implicit loading isn't considered nor is `IgnoreAutoIncludes`, entity tracking and [skip navigations](https://docs.microsoft.com/en-us/ef/core/what-is-new/ef-core-5.0/plan#many-to-many-navigation-properties-aka-skip-navigations) etc.
 * :x: Different DB providers implement things differently - Only Relational EF provider is currently implemented.
 * :heavy_check_mark: Queries are cached so updating queries is difficult when filters change - ~~If filters change at runtime, they don't take effect.~~
 * :x: Filters shouldn't be applied if the navigation items are not going to be loaded.
@@ -115,6 +115,7 @@ For more info about the ABP project, you can visit [docs.abp.io](https://docs.ab
 ### Linked issues
 * https://github.com/dotnet/efcore/issues/11691
 * https://github.com/dotnet/efcore/issues/21093#issuecomment-640108508
+* https://github.com/dotnet/efcore/issues/8576
 * https://github.com/abpframework/abp/issues/6680
 * https://github.com/abpframework/abp/issues/7482
 * https://github.com/abpframework/abp/issues/1181
