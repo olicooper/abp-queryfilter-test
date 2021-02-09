@@ -1,25 +1,49 @@
-# IgnoreAbpQueryFilter Test Project
+# Custom Query Filters Test Project
 
-Test project devoted to extending EntityFramework's `GlobalQueryFilters` functionality. It's a mess because it's a test :P
+A test project devoted to replacing Entity Framework Core's global query filters with a more flexible and controllable solution. This is built on top of _ABP Framework_ and runs on .NET 5. P.S. It's a mess because it's a test :stuck_out_tongue:
+
+A list of current issues can be [found below](#current-issues). **If you feel like helping out, please create a PR**
 
 ## The problem
 
-Soft deletion can be configured on entites by using global query filters e.g. `ModelBuilder.Entity<Post>.HasQueryFilter(p => !p.IsDeleted)`.
-If the parent `Blog` entity contains a collection of `Posts` (`ICollection<Post> Posts`) and some of those posts are deleted, then the `Blog.Posts` property will only contain the non-deleted posts.
-Similarly, if you want to return *ALL* posts and you have the parent `Blog` as a property of the post (`Post.Blog`), only posts belonging to non-deleted blogs will be returned!
+Filters such as soft deletion can be configured on entites by using global query filters e.g. `ModelBuilder.Entity<Post>.HasQueryFilter(p => !p.IsDeleted)` which will ensure that only non-deleted posts are returned by appending the filter to every query.
 
-**The goal is simple:** <u>Ignore</u> the global query filters for specific entities by using DataFilters (i.e. `DataFilter.Disable<ISoftDelete<Blog>>()`) or by using an IQueryable extension method `IgnoreAbpQueryFilter` which stops the filters being applied on a case-by-case basis.
+There are times when you need to return deleted entities, and only way to achieve this (with the built-in query filter functionality) is to add a property to your `DbContext` which is evaluated at runtime. This causes databases providers to not index the query whilst also increasing the query complexity which can hurt performance.
 
-This should fix various issues which have been raised in the past - see [linked issues](#linked-issues)
+A common example of when you might not want to have and entitiy automatically filtered is when it is a child of another entity. 
 
-### Example
 ```csharp
-// Even when the 'Blog' entity is deleted, this should allow the Blog entity to be returned with the Posts
+class Blog
+{
+    public ICollection<Post> Posts { get; set; }
+}
+
+class Post
+{
+    public Blog Blog { get; set; }
+}
+```
+
+Using the example above, if you had a `Blog` entity which contains a collection of `Posts` (`ICollection<Post> Posts`) and some of those posts are deleted, the `Blog.Posts` property will only contain the non-deleted `Post` entities due to gloabl query filters being applied to the `Posts`.
+
+Similarly, if you want to return *ALL* `Posts` and you have the `Blog` as a property of the `Post` i.e. `Post.Blog`, only posts belonging to non-deleted blogs will be returned even if they themselves are not deleted!
+
+Microsoft say this is to ensure referential integrity, but this is only applicable at a database level and will be enforced at that level anyway. It leads to unexpected results (which are hard to spot) and there are also bugs with the implementation (try running `Count()` on the IQueryable before returning the list - you'll get less results than count says you should have!). In my opinion, query filters are business rules, and sometimes you need to ignore those rules when manipulating data. Microsoft's current implementation is also too restrictive for any real-world application.
+
+**The goal is simple:** <u>Ignore</u> the global query filters for specific entities by using ABP's `DataFilters` i.e. `DataFilter.Disable<ISoftDelete<Blog>>()` unless the IQueryable extension method `IQueryable.IgnoreAbpQueryFilters()` has been used, which stops the filters being applied on a per-query basis.
+
+This solution should fix various issues which have been raised in the past - see [linked issues](#linked-issues).
+
+### Usage example
+```csharp
+using (DataFilter.Enable<ISoftDelete())
 using (DataFilter.Disable<ISoftDelete<Blog>>())
 {
-  var postWithDeletedBlog = PostsRepository
-    .Include(x => x.Blog)
-    .ToListAsync();
+    // This should return a list of non-deleted posts with the 'Blog' populated
+    // even if the Blog is marked as deleted.
+    var postWithDeletedBlog = PostsRepository
+        .Include(x => x.Blog)
+        .ToListAsync();
 }
 ```
 
@@ -28,12 +52,18 @@ using (DataFilter.Disable<ISoftDelete<Blog>>())
 1. Disable the use of global query filters (the ABP `ModelBuilder.OnModelCreating()` query filter generation code is bypassed, so no calls to `Entity.UseQueryFilter()`)
 2. Intercept the query compilation and append the appropriate data filters
 
-This sounds simpler than it actually is so the following issues are present in the solution:
-* EF performs multiple calls to the database when loading collections - Collection filtering doesn't currently work.
-* Lazy/Eager/Implicit loading need to be considered.
-* Different DB providers implement things differently - Only Relational EF provider is currently implemented.
-* Queries are cached so updating queries is difficult when filters change - If filters change at runtime, they don't take effect.
-* Filters shouldn't be applied if the navigation items are not going to be loaded - This isn't fully operational yet.
+## Current issues
+
+Replacing query filters sounds simpler than it actually is and there are many hurdles to overcome.
+
+The following known issues (non-exhaustive) are present in the solution:
+
+* :x: Collection filtering doesn't currently work because EF performs multiple calls to the database when loading collections when `QuerySplittingBehavior.SplitQuery` is used.
+* :x: Lazy/Eager/Implicit loading isn't considered nor is `IgnoreAutoIncludes` and entity tracking etc.
+* :x: Different DB providers implement things differently - Only Relational EF provider is currently implemented.
+* :heavy_check_mark: Queries are cached so updating queries is difficult when filters change - ~~If filters change at runtime, they don't take effect.~~
+* :x: Filters shouldn't be applied if the navigation items are not going to be loaded.
+
 
 ## Running the project
 
