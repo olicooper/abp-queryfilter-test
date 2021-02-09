@@ -22,21 +22,21 @@ namespace AbpQueryFilterDemo.Posts
 
         protected override Task<Post> GetEntityByIdAsync(Guid id)
         {
-            return ReadOnlyRepository.FirstOrDefaultAsync(x => x.Id == id);
+            return ReadOnlyRepository.FirstOrDefaultAsync(p => p.Id == id);
         }
 
         public async override Task<PagedResultDto<PostListDto>> GetListAsync(PostListInput input)
         {
             await CheckGetListPolicyAsync();
 
-            using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : DataFilter.Enable<ISoftDelete>())
-            using (input.IgnoreSoftDeleteForBlog ? DataFilter.Disable<ISoftDelete<Blogs.Blog>>() : DataFilter.Enable<ISoftDelete<Blogs.Blog>>())
+            using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : NullDisposable.Instance)
+            using (input.IgnoreSoftDeleteForBlog ? DataFilter.Disable<ISoftDelete<Blogs.Blog>>() : NullDisposable.Instance)
             {
                 var query = await CreateFilteredQueryAsync(input);
                 
-                //query = query.Where(x => !x.Blog.IsDeleted);
+                //query = query.Where(p => !p.Blog.IsDeleted);
 
-                var totalCount = await AsyncExecuter.CountAsync(query);
+                var totalCount = 4;//await AsyncExecuter.CountAsync(query);
                 //var totalCount = 4;
 
                 query = ApplySorting(query, input);
@@ -52,7 +52,7 @@ namespace AbpQueryFilterDemo.Posts
         protected override async Task<System.Linq.IQueryable<Post>> CreateFilteredQueryAsync(PostListInput input)
         {
             //return (await (input.IncludeDetails 
-            //    ? ReadOnlyRepository.WithDetailsAsync(x => x.Blog)
+            //    ? ReadOnlyRepository.WithDetailsAsync(p => p.Blog)
             //    : ReadOnlyRepository.GetQueryableAsync()));
 
             if (input.UseQuerySyntax)
@@ -69,15 +69,15 @@ namespace AbpQueryFilterDemo.Posts
 
                         // Bypass all ABP filters for a query (ignores filters like ISoftDelete/IMultiTenant)
                         // note: the additional 'Where' calls are to test that the 'IgnoreAbpQueryFilters' call is stripped without stripping any other calls
-                        //.Where(x => x.LastModificationTime == null).IgnoreAbpQueryFilters().Where(x => x.LastModificationTime == null)
+                        //.Where(p => p.LastModificationTime == null).IgnoreAbpQueryFilters().Where(p => p.LastModificationTime == null)
 
-                        // This could be difficult to evaluate
-                        //.Include(x => x.Blog).ThenInclude(x => x.Posts)
-                        //.Include(x => x.Blog.Posts)
-                        .Include(x => x.Blog)
+                        // These could be difficult to evaluate
+                        //.Include(p => p.Blog).ThenInclude(b => b.Posts)
+                        //.Include(p => p.Blog.Posts)
+                        .Include(p => p.Blog)
 
                         // Thankfully this fails - so we don't need to account for includes with method calls
-                        //.Include(x => x.Blog.Posts.First().Blog)
+                        //.Include(p => p.Blog.Posts.First().Blog)
                         ;
                 }
                 else

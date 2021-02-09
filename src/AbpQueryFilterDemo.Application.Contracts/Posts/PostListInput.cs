@@ -13,7 +13,7 @@
         /// </summary>
         public bool IgnoreSoftDelete { get; set; } = false;
         /// <summary>
-        /// Disables the 'IsDeleted' query filter for the 'Blog' entity.
+        /// Disables the 'IsDeleted' query filter for the 'Blog' property.
         /// </summary>
         public bool IgnoreSoftDeleteForBlog { get; set; } = false;
         /// <summary>

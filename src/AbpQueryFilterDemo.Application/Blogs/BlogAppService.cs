@@ -1,5 +1,4 @@
-﻿using AbpQueryFilterDemo.Domain;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
@@ -16,6 +15,7 @@ namespace AbpQueryFilterDemo.Blogs
     public class BlogAppService : AbstractKeyReadOnlyAppService<Blog, BlogDto, BlogListDto, Guid, BlogListInput>, IBlogAppService
     {
         protected IRepository<Blog> BlogRepository => LazyServiceProvider.LazyGetRequiredService<IRepository<Blog>>();
+        protected Posts.IPostRepository PostRepository => LazyServiceProvider.LazyGetRequiredService<Posts.IPostRepository>();
         protected IDataFilter DataFilter => LazyServiceProvider.LazyGetRequiredService<IDataFilter>();
 
         public BlogAppService(IRepository<Blog> repository) 
@@ -23,23 +23,19 @@ namespace AbpQueryFilterDemo.Blogs
 
         protected override Task<Blog> GetEntityByIdAsync(Guid id)
         {
-            return ReadOnlyRepository.FirstOrDefaultAsync(x => x.Id == id);
+            return ReadOnlyRepository.FirstOrDefaultAsync(b => b.Id == id);
         }
 
         public async override Task<PagedResultDto<BlogListDto>> GetListAsync(BlogListInput input)
         {
             await CheckGetListPolicyAsync();
 
-            using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : DataFilter.Enable<ISoftDelete>())
+            using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : NullDisposable.Instance)
+            using (input.IgnoreSoftDeleteForPosts ? DataFilter.Disable<ISoftDelete<Posts.Post>>() : NullDisposable.Instance)
             {
                 var query = await CreateFilteredQueryAsync(input);
 
-                // see: https://docs.microsoft.com/en-us/ef/core/querying/single-split-queries#split-queries-1
-                //var query = (await ReadOnlyRepository.GetQueryableAsync()).Include(x => x.Posts).AsSplitQuery();
-
-                //query = query.Where(x => x.Posts.AsQueryable().Any(x => !x.IsDeleted));
-
-                var totalCount = await AsyncExecuter.CountAsync(query);
+                var totalCount = 4;// await AsyncExecuter.CountAsync(query);
 
                 query = ApplySorting(query, input);
                 query = ApplyPaging(query, input);
@@ -53,9 +49,32 @@ namespace AbpQueryFilterDemo.Blogs
 
         protected override async Task<System.Linq.IQueryable<Blog>> CreateFilteredQueryAsync(BlogListInput input)
         {
-            return (await (input.IncludeDetails
-                ? ReadOnlyRepository.WithDetailsAsync(x => x.Posts)
-                : ReadOnlyRepository.GetQueryableAsync()));
+            if (input.IncludeDetails)
+            {
+                if (input.UseIncludeFilter)
+                {
+                    // https://docs.microsoft.com/en-us/ef/core/querying/related-data/eager#filtered-include
+                    return (await ReadOnlyRepository.GetQueryableAsync())
+                        .Include(x => x.Posts
+                            // Note: Ensures the collection is not loaded in to memory prior to evaluation (not really required here though)
+                            .AsQueryable()
+                            .Where(x => !x.IsDeleted)
+                        )
+
+                        // see: https://docs.microsoft.com/en-us/ef/core/querying/single-split-queries#split-queries-1
+
+                        // Note: Default behaviour for collections. Creates a filtered SQL query for root 'Blog' entity, then another Query for filtered Blog.Posts when they are projected/accessed.
+                        //.AsSplitQuery()
+
+                        // Note: Default behaviour for on-to-one entities. Forces all data to be fetched in one query (and generates a 'LEFT JOIN' on Posts table). Can cause cartesian explosion when working with collections.
+                        //.AsSingleQuery()
+                        ;
+                }
+                
+                return await ReadOnlyRepository.WithDetailsAsync(b => b.Posts);
+            }
+
+            return await ReadOnlyRepository.GetQueryableAsync();
         }
     }
 }

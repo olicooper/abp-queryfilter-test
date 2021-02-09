@@ -12,5 +12,13 @@
         /// Disables the 'IsDeleted' query filter.
         /// </summary>
         public bool IgnoreSoftDelete { get; set; } = false;
+        /// <summary>
+        /// Disables the 'IsDeleted' query filter for the 'Posts' property.
+        /// </summary>
+        public bool IgnoreSoftDeleteForPosts { get; set; } = false;
+        /// <summary>
+        /// Uses EF's new 'Include(...)' filters. Only available wehn <see cref="IncludeDetails"/> is <see langword="true"/>.
+        /// </summary>
+        public bool UseIncludeFilter { get; set; } = false;
     }
 }
