@@ -21,38 +21,50 @@
     <div class="row">
         <div class="col">
             <h1 class="mt-2">@L["Blogs"] (@L["WithIncludes"])</h1>
-            <div class="alert alert-info">Returns all non-deleted blogs. Filters are applied to the related Posts, so if the Post is deleted then the blog won't contain the post record in the Posts collection.</div>
+            <div class="alert alert-info">
+                Returns all non-deleted blogs and posts. Filters are applied to the related blog.Posts, so only non-deleted posts are populated in blog.Posts.
+                <i>This is the default behaviour for basic EF query filters.</i>
+            </div>
             <abp-table striped-rows="true" id="BlogsTable"></abp-table>
 
             <h1 class="mt-4 border-top">@L["Blogs"] (@L["IgnoreDeleted"] @L["Posts"])</h1>
-            <div class="alert alert-info">Ignores the ISoftDelete filter for all blog.Posts but not the the root Blog entities. <br />* This option doesn't work when using EF Core query filters - it doesn't return the deleted "Post 1".</div>
+            <div class="alert alert-info">
+                Ignores the ISoftDelete filter for all blog.Posts but not the the root Blog entities.
+                <br /><i>This option doesn't work when using EF query filters - it doesn't return the deleted "Post 1".</i>
+            </div>
             <abp-table striped-rows="true" id="BlogsTable_IgnoreDeletedPosts"></abp-table>
 
             <h1 class="mt-4 border-top">@L["Blogs"] (@L["IgnoreDeleted"])</h1>
-            <div class="alert alert-info">Ignores the ISoftDelete filter for all blogs</div>
+            <div class="alert alert-info">Ignores all ISoftDelete filters for all entities.</div>
             <abp-table striped-rows="true" id="BlogsTable_IgnoreDeleted"></abp-table>
         </div>
 
         <div class="col">
             <h1 class="mt-2">@L["Posts"] (@L["WithIncludes"])</h1>
-            <div class="alert alert-info">Returns all non-deleted posts. Filters are applied to the related Blog, so if the Blog is deleted then the post won't be returned either.</div>
+            <div class="alert alert-info">
+                Returns all non-deleted blogs and posts. Filters are applied to the related post.Blog, so if the post.Blog is deleted then the post won't be returned either.
+                <i>This is the default behaviour for basic EF query filters.</i>
+            </div>
             <abp-table striped-rows="true" id="PostsTable"></abp-table>
 
             <h1 class="mt-4 border-top">@L["Posts"] (@L["IgnoreDeleted"])</h1>
-            <div class="alert alert-info">Ignores the ISoftDelete filter for all posts.</div>
+            <div class="alert alert-info">Ignores all ISoftDelete filters for all entities.</div>
             <abp-table striped-rows="true" id="PostsTable_IgnoreDeleted"></abp-table>
 
             <h1 class="mt-4 border-top">@L["Posts"] (@L["IgnoreDeleted"] @L["Blogs"])</h1>
-            <div class="alert alert-info">Ignores the ISoftDelete filter for the post.Blog but not the the root Post entities. <br />* This option doesn't work when using EF Core query filters - it omits "Post 3" and "Post 4" here because the related "Blog 2" is deleted.</div>
+            <div class="alert alert-info">
+                Only non-deleted posts are returned. Ignores the ISoftDelete filter for the post.Blog.
+                <br /><i>This option doesn't work when using EF query filters - it doesn't return "Post 3" and "Post 4" here because the related "Blog 2" is deleted.</i>
+            </div>
             <abp-table striped-rows="true" id="PostsTable_IgnoreDeletedBlog"></abp-table>
 
             <h1 class="mt-4 border-top">@L["Posts"] (@L["NoIncludes"])</h1>
-            <div class="alert alert-info">Omits 'Include(...)' from the query which doesn't return the related Blog.</div>
+            <div class="alert alert-info">Only non-deleted posts are returned. Omits 'Include(...)' from the query so it won't return the post.Blog.</div>
             <abp-table striped-rows="true" id="PostsTable_ExclDetails"></abp-table>
 
             @*<h1 class="mt-4 border-top">@L["Posts"] (@L["NoIncludes"]) - using query syntax</h1>
-                <div class="alert alert-info">Uses linq query syntax versus traditional method syntax</div>
-                <abp-table striped-rows="true" id="PostsTable_ExclDetails2"></abp-table>*@
+            <div class="alert alert-info">Uses linq query syntax versus traditional method syntax</div>
+            <abp-table striped-rows="true" id="PostsTable_ExclDetails2"></abp-table>*@
         </div>
     </div>
 </div>
