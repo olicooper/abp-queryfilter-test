@@ -21,6 +21,7 @@ namespace AbpQueryFilterDemo.Web
                 .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Query", LogEventLevel.Debug)
                 .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", LogEventLevel.Debug)
                 .MinimumLevel.Override("Volo.Abp", LogEventLevel.Error)
+                .MinimumLevel.Override("AbpQueryFilterDemo.EntityFrameworkCore.AbpFilterAppendingExpressionVisitor", LogEventLevel.Debug)
                 .Enrich.FromLogContext()
                 .WriteTo.Async(c => c.File("Logs/logs.txt"))
 #if DEBUG

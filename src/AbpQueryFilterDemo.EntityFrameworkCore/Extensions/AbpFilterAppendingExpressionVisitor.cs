@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -86,8 +87,8 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         protected override Expression VisitExtension(Expression extensionExpression)
         {
             // Stop application of filters if they have already been applied or 'IgnoreAbpQueryFilters()' has been requested
-            if (QueryCompilationContext.Tags.Contains(IgnoreAbpQueryFiltersTag)
-                || QueryCompilationContext.Tags.Contains(AbpQueryFiltersAppliedTag))
+            if (//QueryCompilationContext.Tags.Contains(IgnoreAbpQueryFiltersTag) || 
+                QueryCompilationContext.Tags.Contains(AbpQueryFiltersAppliedTag))
             {
                 return base.VisitExtension(extensionExpression);
             }
@@ -98,31 +99,58 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             if (extensionExpression is QueryRootExpression queryRootExpression)
             {
                 var modifiedQuery = extensionExpression;
-                var processedCount = 0;
 
-                // Apply filters to root entity
-                processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression);
-
-                // Apply filters to related entities only if 'Include(...)' was used on the query
-                if (AbpQueryFilterDemoConsts.ApplyFiltersToNavigations && !QueryCompilationContext.IgnoreAutoIncludes
-                    // todo: this is probably the wrong thing to do - review it!
-                    //&& _querySplittingBehavior != QuerySplittingBehavior.SplitQuery
-                    )
+                if (!QueryCompilationContext.Tags.Contains(IgnoreAbpQueryFiltersTag))
                 {
-                    foreach (var childEntity in queryRootExpression.EntityType.GetNavigations())
-                    {
-                        if (childEntity == null) continue;
+                    var processedCount = 0;
 
-                        processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression, childEntity);
+                    // Apply filters to root entity
+                    processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression);
+
+                    // Apply filters to related entities only if 'Include(...)' was used on the query
+                    if (AbpQueryFilterDemoConsts.ApplyFiltersToNavigations && !QueryCompilationContext.IgnoreAutoIncludes
+                        // todo: this is probably the wrong thing to do - review it!
+                        //&& _querySplittingBehavior != QuerySplittingBehavior.SplitQuery
+                        )
+                    {
+                        foreach (var childEntity in queryRootExpression.EntityType.GetNavigations())
+                        {
+                            if (childEntity == null) continue;
+
+                            processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression, childEntity);
+                        }
                     }
+
+                    QueryCompilationContext.Tags.Add(AbpQueryFiltersAppliedTag);
+
+                    WriteDebugLog(queryRootExpression, modifiedQuery);
+
+                    return Visit(modifiedQuery);
                 }
 
-                QueryCompilationContext.Tags.Add(AbpQueryFiltersAppliedTag);
-
-                return Visit(modifiedQuery);
+                WriteDebugLog(queryRootExpression, modifiedQuery);
             }
 
             return base.VisitExtension(extensionExpression);
+        }
+
+        private void WriteDebugLog(QueryRootExpression queryRootExpression, Expression? modifiedQuery)
+        {
+            using (QueryCompilationContext.Logger.Logger.BeginScope<AbpFilterAppendingExpressionVisitor>(this))
+            {
+                var state = new System.Text.StringBuilder();
+                state.AppendFormat("DEBUGINFO [{0}]:", queryRootExpression.EntityType.DisplayName());
+                if (QueryCompilationContext.Tags.Contains(IgnoreAbpQueryFiltersTag)) state.Append("\n\tQuery: Not modified");
+                else state.AppendFormat("\n\tQuery (modified): {0}", modifiedQuery.ToString().ReplaceFirst("[Microsoft.EntityFrameworkCore.Query.QueryRootExpression]", "[QueryRoot]"));
+                state.AppendFormat("\n\tNavigations: {0}", queryRootExpression.EntityType.GetNavigations().Select(n => n.Name).JoinAsString(","));
+                state.AppendFormat("\n\tFilters: ");
+                foreach (var f in GlobalFiltersExtension.FilterCollection)
+                {
+                    state.AppendFormat("\n\t - \"{0}\" | Enabled: {1}", f.Value, f.Value.GetType().GetProperty("IsEnabled", BindingFlags.Public | BindingFlags.Instance)?.GetValue(f.Value));
+                }
+                state.AppendLine();
+                QueryCompilationContext.Logger.Logger.LogInformation(state.ToString());
+            }
         }
 
         // Because we know the filters we are creating at compile-time this method can be reasonably simple...
