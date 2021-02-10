@@ -47,10 +47,7 @@
             <abp-table striped-rows="true" id="PostsTable_IgnoreDeletedBlog"></abp-table>
 
             <h1 class="mt-4 border-top">@L["Posts"] (@L["NoIncludes"])</h1>
-            <div class="alert alert-info">
-                Omits 'Include(...)' from the query which doesn't return the related Blog.
-                <br /><span class="text-danger">bug: Filters shouldn't be applied to the related entities which don't have an 'Include()' statement, so three non-deleted posts should be returned here instead of one.</span>
-            </div>
+            <div class="alert alert-info">Omits 'Include(...)' from the query which doesn't return the related Blog.</div>
             <abp-table striped-rows="true" id="PostsTable_ExclDetails"></abp-table>
 
             @*<h1 class="mt-4 border-top">@L["Posts"] (@L["NoIncludes"]) - using query syntax</h1>

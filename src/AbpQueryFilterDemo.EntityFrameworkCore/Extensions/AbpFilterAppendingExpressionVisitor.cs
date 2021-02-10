@@ -107,7 +107,6 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                     // Apply filters to root entity
                     processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression);
 
-                    // Apply filters to related entities only if 'Include(...)' was used on the query
                     if (AbpQueryFilterDemoConsts.ApplyFiltersToNavigations && !QueryCompilationContext.IgnoreAutoIncludes
                         // todo: this is probably the wrong thing to do - review it!
                         //&& _querySplittingBehavior != QuerySplittingBehavior.SplitQuery
@@ -117,7 +116,18 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                         {
                             if (childEntity == null) continue;
 
-                            processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression, childEntity);
+                            // Apply filters to related entities only if 'Include(...)' was used on the query
+                            // todo: Is this approach correct? ABP uses eager loading when using 'IRepository.WithDetails()', so an include statement will always be present
+                            // todo: temporary - this is inefficient and unreliable and needs improving.
+                            var hasInclude = _includeExpressionCache
+                                .Any(include => include.Arguments
+                                    .Any(a => (a.NodeType == ExpressionType.Quote || a.NodeType == ExpressionType.Lambda) 
+                                        && childEntity.Name == (a.UnwrapLambdaFromQuote().Body as MemberExpression)?.Member.Name));
+                            
+                            if (hasInclude)
+                            {
+                                processedCount += ApplyAbpGlobalFilters(ref modifiedQuery, queryRootExpression, childEntity);
+                            }
                         }
                     }
 
