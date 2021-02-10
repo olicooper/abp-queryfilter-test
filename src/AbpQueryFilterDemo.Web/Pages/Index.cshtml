@@ -27,16 +27,16 @@
             </div>
             <abp-table striped-rows="true" id="BlogsTable"></abp-table>
 
+            <h1 class="mt-4 border-top">@L["Blogs"] (@L["IgnoreDeleted"])</h1>
+            <div class="alert alert-info">Ignores all ISoftDelete filters for all entities.</div>
+            <abp-table striped-rows="true" id="BlogsTable_IgnoreDeleted"></abp-table>
+
             <h1 class="mt-4 border-top">@L["Blogs"] (@L["IgnoreDeleted"] @L["Posts"])</h1>
             <div class="alert alert-info">
                 Ignores the ISoftDelete filter for all blog.Posts but not the the root Blog entities.
                 <br /><i>This option doesn't work when using EF query filters - it doesn't return the deleted "Post 1".</i>
             </div>
             <abp-table striped-rows="true" id="BlogsTable_IgnoreDeletedPosts"></abp-table>
-
-            <h1 class="mt-4 border-top">@L["Blogs"] (@L["IgnoreDeleted"])</h1>
-            <div class="alert alert-info">Ignores all ISoftDelete filters for all entities.</div>
-            <abp-table striped-rows="true" id="BlogsTable_IgnoreDeleted"></abp-table>
         </div>
 
         <div class="col">
