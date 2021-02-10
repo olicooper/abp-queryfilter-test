@@ -30,12 +30,17 @@ namespace AbpQueryFilterDemo.Blogs
         {
             await CheckGetListPolicyAsync();
 
-            using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : NullDisposable.Instance)
-            using (input.IgnoreSoftDeleteForPosts ? DataFilter.Disable<ISoftDelete<Posts.Post>>() : NullDisposable.Instance)
+            using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : DataFilter.Enable<ISoftDelete>())
+            using (input.IgnoreSoftDeleteForPosts ? DataFilter.Disable<ISoftDelete<Posts.Post>>() : DataFilter.Enable<ISoftDelete<Posts.Post>>())
             {
                 var query = await CreateFilteredQueryAsync(input);
 
-                var totalCount = 4;// await AsyncExecuter.CountAsync(query);
+                if (AbpQueryFilterDemoConsts.UseCustomFiltering && input.IgnoreSoftDelete && input.IgnoreSoftDeleteForPosts)
+                {
+                    query = query.IgnoreAbpQueryFilters();
+                }
+
+                var totalCount = AbpQueryFilterDemoConsts.ExecuteCountQuery ? await AsyncExecuter.CountAsync(query) : 2;
 
                 query = ApplySorting(query, input);
                 query = ApplyPaging(query, input);
@@ -58,7 +63,7 @@ namespace AbpQueryFilterDemo.Blogs
                         .Include(x => x.Posts
                             // Note: Ensures the collection is not loaded in to memory prior to evaluation (not really required here though)
                             .AsQueryable()
-                            .Where(x => !x.IsDeleted)
+                            .Where(x => x.ConcurrencyStamp != null && x.ExtraProperties != null)
                         )
 
                         // see: https://docs.microsoft.com/en-us/ef/core/querying/single-split-queries#split-queries-1
@@ -70,7 +75,7 @@ namespace AbpQueryFilterDemo.Blogs
                         //.AsSingleQuery()
                         ;
                 }
-                
+
                 return await ReadOnlyRepository.WithDetailsAsync(b => b.Posts);
             }
 

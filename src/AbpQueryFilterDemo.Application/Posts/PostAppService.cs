@@ -28,16 +28,19 @@ namespace AbpQueryFilterDemo.Posts
         public async override Task<PagedResultDto<PostListDto>> GetListAsync(PostListInput input)
         {
             await CheckGetListPolicyAsync();
-
-            using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : NullDisposable.Instance)
-            using (input.IgnoreSoftDeleteForBlog ? DataFilter.Disable<ISoftDelete<Blogs.Blog>>() : NullDisposable.Instance)
+            
+            //NullDisposable.Instance
+            using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : DataFilter.Enable<ISoftDelete>())
+            using (input.IgnoreSoftDeleteForBlog ? DataFilter.Disable<ISoftDelete<Blogs.Blog>>() : DataFilter.Enable<ISoftDelete<Blogs.Blog>>())
             {
                 var query = await CreateFilteredQueryAsync(input);
-                
-                //query = query.Where(p => !p.Blog.IsDeleted);
 
-                var totalCount = 4;//await AsyncExecuter.CountAsync(query);
-                //var totalCount = 4;
+                if (AbpQueryFilterDemoConsts.UseCustomFiltering && input.IgnoreSoftDelete && input.IgnoreSoftDeleteForBlog)
+                {
+                    query = query.IgnoreAbpQueryFilters();
+                }
+
+                var totalCount = AbpQueryFilterDemoConsts.ExecuteCountQuery ? await AsyncExecuter.CountAsync(query) : 4;
 
                 query = ApplySorting(query, input);
                 query = ApplyPaging(query, input);

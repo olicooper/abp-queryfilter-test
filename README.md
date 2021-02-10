@@ -73,6 +73,15 @@ The following known issues (non-exhaustive) are present in the solution:
 2. Run the `DbMigrations` project to create the database and seed the blog/post data
 3. Run the `Web` project to see the sample data. You can modify `Pages/index.js` to change which queries are run.
 
+### Execution flow:
+
+* `CustomAbpDbContext` is an extension to `AbpDbContext` which overrides some functionality, adds the `AbpGlobalFiltersOptionsExtension` and replaces the `IQueryTranslationPreprocessorFactory`
+  * `CustomQueryTranslationPreprocessorFactory` creates an instance of `CustomQueryTranslationPreprocessor`
+    * An instance of `AbpFilterAppendingExpressionVisitor` is created by `CustomQueryTranslationPreprocessor` which then modifies the query in the `Process()` method before allowing the base provider to proccess the query
+       1. This uses the `AbpGlobalFiltersOptionsExtension` to gain access to important contextual information such as the `IDataFilter` and `CurrentTenant` which are required to modify the query
+       2. The `CompiledQueryWithAbpFiltersCacheKey` decides if the query needs to be processed again or a cached copy of the results can be returned. 
+       This looks to see if the `DataFilters` have changed etc. and if they have then the `AbpFilterAppendingExpressionVisitor` is executed to regenerate the query.
+
 For more info about the ABP project, you can visit [docs.abp.io](https://docs.abp.io).
 
 ## Main project files
@@ -83,15 +92,26 @@ For more info about the ABP project, you can visit [docs.abp.io](https://docs.ab
 * Domain
     * Data/AppDataSeedContributor.cs
     * Extensions/AbpQueryableExtensions.cs
+    * AbpQueryFilterDemoConsts.cs <-- Change core configuration here
 * Domain.Shared
     * IMultiTenantExtension.cs
     * ISoftDeleteExtension.cs
 * EntityframeworkCore
+    * Extensions/
+        * AbpFilterAppendingExpressionVisitor.cs
+        * AbpGlobalFiltersOptionsExtension.cs
+        * CompiledQueryWithAbpFiltersCacheKeyGenerator.cs
+        * CustomQueryTranslationPreprocessor.cs
+        * Extensions.cs
     * CustomAbpDbContext.cs
     * Repositories/PostRepository.cs
 * Web
     * Pages/Index.cshtml
     * Pages/Index.js
+    * Logs/log.txt <-- View the compiled SQL queries here
+
+
+Most of the logic is in `AbpFilterAppendingExpressionVisitor` so check that out first if you want to get stuck in.
 
 ## Useful links
 
