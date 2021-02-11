@@ -169,8 +169,6 @@ namespace AbpQueryFilterDemo
 
         protected readonly ConcurrentDictionary<Type, IBasicDataFilter> Filters = new();
 
-        protected readonly AbpDataFilterOptions FilterOptions;
-
         protected readonly IServiceProvider ServiceProvider;
 
         public DataFilter(IServiceProvider serviceProvider)
