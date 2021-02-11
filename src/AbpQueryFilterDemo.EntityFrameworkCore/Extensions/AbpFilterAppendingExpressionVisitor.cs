@@ -1,4 +1,5 @@
-﻿using JetBrains.Annotations;
+﻿using AbpQueryFilterDemo.Extensions;
+using JetBrains.Annotations;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -153,10 +154,19 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 if (QueryCompilationContext.Tags.Contains(IgnoreAbpQueryFiltersTag)) state.Append("\n\tQuery: Not modified");
                 else state.AppendFormat("\n\tQuery (modified): {0}", modifiedQuery.ToString().ReplaceFirst("[Microsoft.EntityFrameworkCore.Query.QueryRootExpression]", "[QueryRoot]"));
                 state.AppendFormat("\n\tNavigations: {0}", queryRootExpression.EntityType.GetNavigations().Select(n => n.Name).JoinAsString(","));
-                state.AppendFormat("\n\tFilters: ");
-                foreach (var f in GlobalFiltersExtension.FilterCollection)
+                state.AppendFormat("\n\tActive filters: ");
+                foreach (var f in GlobalFiltersExtension.DataFilter.ReadOnlyFilters.Where(f => f.Value.IsActive))
                 {
-                    state.AppendFormat("\n\t - \"{0}\" | Enabled: {1}", f.Value, f.Value.GetType().GetProperty("IsEnabled", BindingFlags.Public | BindingFlags.Instance)?.GetValue(f.Value));
+                    state.AppendFormat("\n\t - \"{0}\" | Enabled: {1}", 
+                        f.Key.GetFriendlyName().Replace("AbpQueryFilterDemo.", string.Empty), 
+                        f.Value.IsEnabled);
+                }
+                state.AppendFormat("\n\tInactive filters: ");
+                foreach (var f in GlobalFiltersExtension.DataFilter.ReadOnlyFilters.Where(f => !f.Value.IsActive))
+                {
+                    state.AppendFormat("\n\t - \"{0}\" | Enabled: {1}",
+                        f.Key.GetFriendlyName().Replace("AbpQueryFilterDemo.", string.Empty),
+                        f.Value.IsEnabled);
                 }
                 state.AppendLine();
                 QueryCompilationContext.Logger.Logger.LogInformation(state.ToString());
@@ -196,11 +206,10 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             // Apply ISoftDelete filter
             if (typeof(ISoftDelete).IsAssignableFrom(targetEntityType.ClrType))
             {
-                // todo: Update this after IDataFilter and ISoftDelete contain appropriate generic interfaces
                 var entitySoftDelete = GetEntityFilter(typeof(ISoftDelete<>), targetEntityType.ClrType);
-                var softDelete = GetEntityFilter(typeof(ISoftDelete));
+                var softDelete = GetFilter<ISoftDelete>();
                 // Filters targetted at specific entities take priority over general filters
-                if (entitySoftDelete.IsSet && entitySoftDelete.IsEnabled || !entitySoftDelete.IsSet && (!softDelete.IsSet || softDelete.IsEnabled))
+                if (entitySoftDelete.IsActive && entitySoftDelete.IsEnabled || !entitySoftDelete.IsActive && (!softDelete.IsActive || softDelete.IsEnabled))
                 {
                     var softDeleteExpr =
                         EnsureCollectionWrapped(param =>
@@ -234,11 +243,10 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             // Apply IMultiTenant filter
             if (CurrentTenant != null && typeof(IMultiTenant).IsAssignableFrom(targetEntityType.ClrType))
             {
-                // todo: Update this after IDataFilter and IMultiTenant contain appropriate generic interfaces
                 var entityMultiTenant = GetEntityFilter(typeof(IMultiTenant<>), targetEntityType.ClrType);
-                var multiTenant = GetEntityFilter(typeof(IMultiTenant));
+                var multiTenant = GetFilter<IMultiTenant>();
                 // Filters targetted at specific entities take priority over general filters
-                if (entityMultiTenant.IsSet && entityMultiTenant.IsEnabled || !entityMultiTenant.IsSet && (!multiTenant.IsSet || multiTenant.IsEnabled))
+                if (entityMultiTenant.IsActive && entityMultiTenant.IsEnabled || !entityMultiTenant.IsActive && (!multiTenant.IsActive || multiTenant.IsEnabled))
                 {
                     var tenantIdExpr =
                         EnsureCollectionWrapped(param =>
@@ -440,24 +448,15 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
             return uniqueName;
         }
-#nullable enable
-        protected (bool IsSet, bool IsEnabled) GetEntityFilter(Type filterType, Type? entityType = null)
+
+        protected IBasicDataFilter GetFilter<TFilter>() where TFilter : class
         {
-            var type = entityType == null ? filterType : filterType.MakeGenericType(entityType);
-
-            if (GlobalFiltersExtension?.FilterCollection != null && GlobalFiltersExtension.FilterCollection.TryGetValue(type, out var filter))
-            {
-                var propertyInfo = filter.GetType().GetProperty("IsEnabled", BindingFlags.Public | BindingFlags.Instance);
-                if (propertyInfo != null)
-                {
-                    return (true, ((bool?)propertyInfo.GetValue(filter)) ?? false);
-                }
-            }
-
-            // Based on DataFilter.EnsureInitialized() method.
-            // Return 'false' if there is not default state for specific entities, but return true for generic filters.
-            return (false, GlobalFiltersExtension?.DataFilterOptions.DefaultStates.GetOrDefault(type)?.IsEnabled ?? entityType != null);
+            return GlobalFiltersExtension.DataFilter.GetFilter<TFilter>();
         }
-#nullable disable
+
+        protected IBasicDataFilter GetEntityFilter(Type filterType, Type entityType)
+        {
+            return GlobalFiltersExtension.DataFilter.GetFilter(filterType.MakeGenericType(entityType));
+        }
     }
 }

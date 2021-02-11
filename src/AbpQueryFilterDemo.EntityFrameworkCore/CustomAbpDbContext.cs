@@ -31,8 +31,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
                 // todo: does this work okay when the when the IServiceProvider is changed within the query context?
                 var extension = optionsBuilder.Options.FindExtension<AbpGlobalFiltersOptionsExtension>()
                     ?? new AbpGlobalFiltersOptionsExtension(
-                        this.DataFilter, 
-                        LazyServiceProvider.LazyGetRequiredService<IOptions<AbpDataFilterOptions>>(), 
+                        LazyServiceProvider.LazyGetRequiredService<AbpQueryFilterDemo.IDataFilter>(), 
                         LazyServiceProvider.LazyGetRequiredService<ICurrentTenantAccessor>());
 
                 ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);

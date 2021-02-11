@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
-using System.Reflection;
 
 namespace AbpQueryFilterDemo.EntityFrameworkCore
 {
@@ -32,10 +31,9 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         {
             if (AbpQueryFilterDemoConsts.UseCustomFiltering && GlobalFiltersExtension != null)
             {
-                // todo: A change in the quantity of values will invalidate the cache key. 
-                //       We need to determine which were applied to this specific query.
-                var currentFilters = GlobalFiltersExtension.FilterCollection.Values
-                    .Select(x => GetFilterValue(x))
+                var currentFilters = GlobalFiltersExtension.DataFilter.ReadOnlyFilters.Values
+                    .Where(filter => filter.IsActive)
+                    .Select(filter => new FilterValue(filter.GetType(), filter.IsEnabled))
                     .ToHashSet();
 
                 return new CompiledQueryWithAbpFiltersCacheKey(
@@ -47,23 +45,6 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             {
                 return base.GenerateCacheKeyCore(query, async);
             }
-        }
-
-        private static FilterValue GetFilterValue(object obj)
-        {
-            var type = obj.GetType();
-            bool isEnabled = false;
-
-            try
-            {
-                // todo: remove this once IDataFilter is updated :)
-                isEnabled = (bool)type
-                .GetProperty("IsEnabled", BindingFlags.Public | BindingFlags.Instance)
-                .GetValue(obj);
-            }
-            catch { }
-
-            return new FilterValue(type, isEnabled);
         }
 
         protected readonly struct CompiledQueryWithAbpFiltersCacheKey : IEquatable<CompiledQueryWithAbpFiltersCacheKey>

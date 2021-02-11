@@ -38,6 +38,10 @@ namespace AbpQueryFilterDemo
                 options.IsEnabled = MultiTenancyConsts.IsEnabled;
             });
 
+            // Add custom (extended) version of the IDataFilter
+            context.Services.AddSingleton<AbpQueryFilterDemo.IDataFilter, AbpQueryFilterDemo.DataFilter>();
+            context.Services.AddSingleton(typeof(AbpQueryFilterDemo.IDataFilter<>), typeof(AbpQueryFilterDemo.DataFilter<>));
+
 #if DEBUG
             context.Services.Replace(ServiceDescriptor.Singleton<IEmailSender, NullEmailSender>());
 #endif

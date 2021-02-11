@@ -16,7 +16,7 @@ namespace AbpQueryFilterDemo.Blogs
     {
         protected IRepository<Blog> BlogRepository => LazyServiceProvider.LazyGetRequiredService<IRepository<Blog>>();
         protected Posts.IPostRepository PostRepository => LazyServiceProvider.LazyGetRequiredService<Posts.IPostRepository>();
-        protected IDataFilter DataFilter => LazyServiceProvider.LazyGetRequiredService<IDataFilter>();
+        protected AbpQueryFilterDemo.IDataFilter DataFilter => LazyServiceProvider.LazyGetRequiredService<AbpQueryFilterDemo.IDataFilter>();
 
         public BlogAppService(IRepository<Blog> repository) 
             : base(repository) { }
@@ -32,13 +32,13 @@ namespace AbpQueryFilterDemo.Blogs
 
             using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete>() : DataFilter.Enable<ISoftDelete>())
             using (input.IgnoreSoftDeleteForPosts ? DataFilter.Disable<ISoftDelete<Posts.Post>>() : DataFilter.Enable<ISoftDelete<Posts.Post>>())
+            //using (input.IgnoreSoftDelete ? DataFilter.Disable<ISoftDelete<Blog>>() : DataFilter.Enable<ISoftDelete<Blog>>())
             {
                 var query = await CreateFilteredQueryAsync(input);
-
-                if (AbpQueryFilterDemoConsts.UseCustomFiltering && input.IgnoreSoftDelete && input.IgnoreSoftDeleteForPosts)
-                {
-                    query = query.IgnoreAbpQueryFilters();
-                }
+                //if (AbpQueryFilterDemoConsts.UseCustomFiltering && input.IgnoreSoftDelete && input.IgnoreSoftDeleteForPosts)
+                //{
+                //    query = query.IgnoreAbpQueryFilters();
+                //}
 
                 var totalCount = AbpQueryFilterDemoConsts.ExecuteCountQuery ? await AsyncExecuter.CountAsync(query) : 2;
 
