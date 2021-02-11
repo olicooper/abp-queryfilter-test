@@ -451,12 +451,12 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
 
         protected IBasicDataFilter GetFilter<TFilter>() where TFilter : class
         {
-            return GlobalFiltersExtension.DataFilter.GetFilter<TFilter>();
+            return GlobalFiltersExtension.DataFilter.GetOrAddFilter<TFilter>();
         }
 
         protected IBasicDataFilter GetEntityFilter(Type filterType, Type entityType)
         {
-            return GlobalFiltersExtension.DataFilter.GetFilter(filterType.MakeGenericType(entityType));
+            return GlobalFiltersExtension.DataFilter.GetOrAddFilter(filterType.MakeGenericType(entityType));
         }
     }
 }
