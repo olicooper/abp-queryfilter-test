@@ -20,6 +20,17 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
         public bool AbpQueryFiltersDisabled => _abpQueryFiltersDisabled.Value;
         protected readonly AsyncLocal<bool> _abpQueryFiltersDisabled;
 
+        // copy constructor
+        public AbpGlobalFiltersOptionsExtension(AbpGlobalFiltersOptionsExtension other, ICurrentTenantAccessor currentTenantAccessor)
+        {
+            _info = other._info;
+            DataFilter = other.DataFilter;
+            CurrentTenantAccessor = currentTenantAccessor ?? other.CurrentTenantAccessor;
+            _abpQueryFiltersDisabled = other._abpQueryFiltersDisabled;
+        }
+
+        // Allows injecting services from outside EntityFramework's self-managed DI container
+        // see: https://blog.oneunicorn.com/2016/10/27/dependency-injection-in-ef-core-1-1/
         public AbpGlobalFiltersOptionsExtension(
             AbpQueryFilterDemo.IDataFilter dataFilter,
             ICurrentTenantAccessor currentTenantAccessor)
@@ -34,7 +45,17 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             _abpQueryFiltersDisabled.Value = value;
         }
 
-        public virtual void ApplyServices(IServiceCollection services) { }
+        // configures the required services for the extension with the service collection scoped to the current request.
+        public virtual void ApplyServices(IServiceCollection servicesCollection)
+        {
+            // Register the AbpCacheKeyGenerator so it can be injected to the RelationalCompiledQueryCacheKeyGenerator instance
+            new EntityFrameworkRelationalServicesBuilder(servicesCollection)
+                .TryAddProviderSpecificServices(m => m
+                    .GetInfrastructure()
+                        .AddDependencyScoped<AbpCacheKeyGenerator>())
+                .TryAddCoreServices();
+        }
+
         public virtual void Validate(IDbContextOptions options) { }
 
         private sealed class ExtensionInfo : DbContextOptionsExtensionInfo
@@ -43,7 +64,7 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             public override bool IsDatabaseProvider => false;
             public override long GetServiceProviderHashCode() => 0;
             // todo: list more debug info (i.e. tenant info and data filters) in log output
-            public override string LogFragment => "Using AbpGlobalFilters";
+            public override string LogFragment => "Using AbpGlobalFiltersExtension";
             public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
             {
                 debugInfo["AbpGlobalFilters"] = "1";

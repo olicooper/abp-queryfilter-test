@@ -7,6 +7,10 @@
     <RootNamespace>AbpQueryFilterDemo</RootNamespace>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DefineConstants>TRACE;DBPROVIDER_POMELO_MYSQL</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\AbpQueryFilterDemo.Domain\AbpQueryFilterDemo.Domain.csproj" />
     <PackageReference Include="Volo.Abp.EntityFrameworkCore.MySQL" Version="4.2.0" />

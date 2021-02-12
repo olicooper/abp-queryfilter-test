@@ -2,12 +2,12 @@
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
-using Microsoft.Extensions.Options;
 using System;
 using System.Linq.Expressions;
 using Volo.Abp.Data;
 using Volo.Abp.EntityFrameworkCore;
 using Volo.Abp.MultiTenancy;
+
 
 // Namespace should be 'Volo.Abp.EntityFrameworkCore.MySQL' according to: https://docs.microsoft.com/en-us/ef/core/providers/writing-a-provider#suggested-naming-of-third-party-providers
 namespace AbpQueryFilterDemo.EntityFrameworkCore
@@ -25,16 +25,25 @@ namespace AbpQueryFilterDemo.EntityFrameworkCore
             // todo: LazyServiceProvider is null when using powershell 'add-migration' etc. this needs investigating!
             if (AbpQueryFilterDemoConsts.UseCustomFiltering && LazyServiceProvider != null)
             {
-                optionsBuilder.ReplaceService<ICompiledQueryCacheKeyGenerator, CompiledQueryWithAbpFiltersCacheKeyGenerator>();
-
                 // Custom Extension to access DataFilter and CurrentTenant 
+                // see: https://blog.oneunicorn.com/2016/11/03/implementing-a-provider-use-method-for-ef-core-1-1/
                 // todo: does this work okay when the when the IServiceProvider is changed within the query context?
-                var extension = optionsBuilder.Options.FindExtension<AbpGlobalFiltersOptionsExtension>()
-                    ?? new AbpGlobalFiltersOptionsExtension(
-                        LazyServiceProvider.LazyGetRequiredService<AbpQueryFilterDemo.IDataFilter>(), 
+                var extension = optionsBuilder.Options.FindExtension<AbpGlobalFiltersOptionsExtension>();
+                extension = extension != null
+                    ? new AbpGlobalFiltersOptionsExtension(extension,
+                        LazyServiceProvider.LazyGetRequiredService<ICurrentTenantAccessor>())
+                    : new AbpGlobalFiltersOptionsExtension(
+                        LazyServiceProvider.LazyGetRequiredService<AbpQueryFilterDemo.IDataFilter>(),
                         LazyServiceProvider.LazyGetRequiredService<ICurrentTenantAccessor>());
-
                 ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
+
+#if DBPROVIDER_POMELO_MYSQL
+#pragma warning disable EF1001 // Internal EF Core API usage.
+                optionsBuilder.ReplaceService<ICompiledQueryCacheKeyGenerator, MySqlCompiledQueryWithAbpFiltersCacheKeyGenerator>();
+#pragma warning restore EF1001 // Internal EF Core API usage.
+#else
+                optionsBuilder.ReplaceService<ICompiledQueryCacheKeyGenerator, RelationalCompiledQueryWithAbpFiltersCacheKeyGenerator>();
+#endif
             }
         }
 
